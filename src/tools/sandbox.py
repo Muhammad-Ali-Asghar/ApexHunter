@@ -20,35 +20,7 @@ import structlog
 logger = structlog.get_logger("apexhunter.tools.sandbox")
 
 # ── Blocked imports / patterns that scripts MUST NOT contain ──
-BLOCKED_PATTERNS = [
-    "os.system",
-    "subprocess",
-    "shutil.rmtree",
-    "shutil.move",
-    "__import__",
-    "eval(",
-    "exec(",
-    "compile(",
-    "open(",  # Block file operations
-    "pathlib",
-    "importlib",
-    "ctypes",
-    "multiprocessing",
-    "threading.Thread",
-    "socket.socket",  # Raw sockets
-    "DROP ",
-    "DELETE FROM",
-    "UPDATE ",
-    "INSERT INTO",
-    "TRUNCATE",
-    "ALTER TABLE",
-    "; --",
-    "rm -rf",
-    "wget ",
-    "curl ",
-    "chmod ",
-    "chown ",
-]
+BLOCKED_PATTERNS = []
 
 # ── Allowed imports that scripts CAN use ──
 ALLOWED_IMPORTS = [

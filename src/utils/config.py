@@ -51,24 +51,16 @@ class LLMProviderConfig(BaseSettings):
     executor_provider: str = Field(default="ollama", alias="APEX_EXECUTOR_PROVIDER")
 
     # ── Azure OpenAI ──────────────────────────────
-    azure_openai_api_key: Optional[str] = Field(
-        default=None, alias="AZURE_OPENAI_API_KEY"
-    )
-    azure_openai_endpoint: Optional[str] = Field(
-        default=None, alias="AZURE_OPENAI_ENDPOINT"
-    )
-    azure_openai_deployment: str = Field(
-        default="gpt-4o", alias="AZURE_OPENAI_DEPLOYMENT"
-    )
+    azure_openai_api_key: Optional[str] = Field(default=None, alias="AZURE_OPENAI_API_KEY")
+    azure_openai_endpoint: Optional[str] = Field(default=None, alias="AZURE_OPENAI_ENDPOINT")
+    azure_openai_deployment: str = Field(default="gpt-4o", alias="AZURE_OPENAI_DEPLOYMENT")
     azure_openai_api_version: str = Field(
         default="2024-08-01-preview", alias="AZURE_OPENAI_API_VERSION"
     )
 
     # ── AWS Bedrock ───────────────────────────────
     aws_access_key_id: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID")
-    aws_secret_access_key: Optional[str] = Field(
-        default=None, alias="AWS_SECRET_ACCESS_KEY"
-    )
+    aws_secret_access_key: Optional[str] = Field(default=None, alias="AWS_SECRET_ACCESS_KEY")
     aws_region: str = Field(default="us-east-1", alias="AWS_DEFAULT_REGION")
     aws_bedrock_model_id: str = Field(
         default="anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -80,6 +72,12 @@ class LLMProviderConfig(BaseSettings):
         default="http://host.docker.internal:11434", alias="OLLAMA_BASE_URL"
     )
     ollama_model: str = Field(default="llama3", alias="OLLAMA_MODEL")
+
+    # ── Google Gemini (via Gemini CLI OAuth) ──────
+    gemini_model: str = Field(default="gemini-2.5-pro", alias="GEMINI_MODEL")
+    gemini_oauth_creds_path: str = Field(
+        default="~/.gemini/oauth_creds.json", alias="GEMINI_OAUTH_CREDS_PATH"
+    )
 
     class Config:
         env_file = ".env"
@@ -105,15 +103,9 @@ class AgentConfig(BaseSettings):
         alias="APEX_RESUME_SPEED_FACTOR",
         description="Speed factor when resuming after auto-sleep (0.0-1.0)",
     )
-    request_delay: float = Field(
-        default=0.5, description="Base delay between requests in seconds"
-    )
-    max_retries: int = Field(
-        default=3, description="Max retries for OSINT/external APIs"
-    )
-    retry_backoff: float = Field(
-        default=5.0, description="Backoff seconds between retries"
-    )
+    request_delay: float = Field(default=0.5, description="Base delay between requests in seconds")
+    max_retries: int = Field(default=3, description="Max retries for OSINT/external APIs")
+    retry_backoff: float = Field(default=5.0, description="Backoff seconds between retries")
     jwt_crack_wordlist: str = Field(
         default="/app/data/seclists/jwt-secrets.txt",
         description="Path to JWT secret wordlist",

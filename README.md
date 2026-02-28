@@ -62,14 +62,30 @@ Phase 4: Analysis & Cleanup
 
 ApexHunter uses a dual-LLM architecture:
 
-- **Planner** (heavy reasoning): Azure OpenAI (GPT-4o), AWS Bedrock (Claude 3.5 Sonnet), or Ollama
+- **Planner** (heavy reasoning): Azure OpenAI (GPT-4o), AWS Bedrock (Claude 3.5 Sonnet), Google Gemini (2.5 Pro), or Ollama
 - **Executor** (fast, cheap): Ollama (Llama 3) recommended for high-volume tactical decisions
 
 Configure via environment variables:
 ```
-APEX_PLANNER_PROVIDER=azure
+APEX_PLANNER_PROVIDER=gemini
 APEX_EXECUTOR_PROVIDER=ollama
 ```
+
+#### Google Gemini via Gemini CLI OAuth
+
+Instead of using a rate-limited API key from AI Studio, ApexHunter can reuse the OAuth token from the [Gemini CLI](https://github.com/google-gemini/gemini-cli). This gives access to the same generous quota the CLI uses.
+
+1. Install and run the Gemini CLI once: `gemini`
+2. Complete the browser OAuth flow when prompted
+3. Set the provider in `.env`:
+   ```
+   APEX_PLANNER_PROVIDER=gemini
+   GEMINI_MODEL=gemini-2.5-pro
+   GEMINI_OAUTH_CLIENT_ID=<client-id-from-gemini-cli>
+   GEMINI_OAUTH_CLIENT_SECRET=<client-secret-from-gemini-cli>
+   ```
+
+The OAuth client ID and secret are the Gemini CLI's own public desktop-app credentials (hardcoded in its source code). You can find them in the [Gemini CLI repo](https://github.com/google-gemini/gemini-cli). The OAuth token at `~/.gemini/oauth_creds.json` is automatically loaded and refreshed. Inside Docker, the `~/.gemini` directory is bind-mounted read-only into the container.
 
 ## Project Structure
 
@@ -90,7 +106,7 @@ apexhunter/
 │   ├── utils/
 │   │   ├── config.py            # Pydantic configuration
 │   │   ├── http_client.py       # Guarded HTTP client
-│   │   ├── llm_provider.py      # LLM factory (Azure/Bedrock/Ollama)
+│   │   ├── llm_provider.py      # LLM factory (Azure/Bedrock/Ollama/Gemini)
 │   │   └── logger.py            # Structured logging (structlog)
 │   ├── guardrails/
 │   │   ├── roe_gatekeeper.py    # Scope enforcement
@@ -122,7 +138,7 @@ apexhunter/
 ## Prerequisites
 
 - **Docker** and **Docker Compose**
-- An LLM provider configured (Azure OpenAI, AWS Bedrock, or a local Ollama instance)
+- An LLM provider configured (Azure OpenAI, AWS Bedrock, Google Gemini, or a local Ollama instance)
 
 Everything else (Python, Go tools, Playwright, Chromium) is managed inside the Docker container.
 
@@ -145,6 +161,7 @@ Edit `.env` with your LLM provider credentials. At minimum, configure one of:
 
 - **Azure OpenAI**: `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`
 - **AWS Bedrock**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`
+- **Google Gemini**: Run `gemini` CLI once to authenticate, then set `APEX_PLANNER_PROVIDER=gemini`
 - **Ollama** (local): `OLLAMA_BASE_URL` (defaults to `http://host.docker.internal:11434`)
 
 ### 3. Configure the scan target
@@ -242,8 +259,10 @@ Current status: **31/31 tests passing** (state management, guardrails, flight re
 
 | Variable | Default | Description |
 |---|---|---|
-| `APEX_PLANNER_PROVIDER` | `azure` | LLM for strategic planning (`azure`, `bedrock`, `ollama`, `openai`) |
+| `APEX_PLANNER_PROVIDER` | `azure` | LLM for strategic planning (`azure`, `bedrock`, `ollama`, `openai`, `gemini`) |
 | `APEX_EXECUTOR_PROVIDER` | `ollama` | LLM for tactical execution |
+| `GEMINI_MODEL` | `gemini-2.5-pro` | Gemini model name |
+| `GEMINI_OAUTH_CREDS_PATH` | `~/.gemini/oauth_creds.json` | Path to Gemini CLI OAuth token file |
 | `APEX_MAX_CONCURRENT` | `20` | Max concurrent requests for race condition testing |
 | `APEX_CIRCUIT_BREAKER_THRESHOLD` | `5` | 5xx error rate (%) to trigger auto-sleep |
 | `APEX_AUTOSLEEP_DURATION` | `900` | Seconds to sleep when circuit breaker trips |
