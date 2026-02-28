@@ -285,6 +285,9 @@ class FuzzerAgent:
     async def run(self, state: ApexState) -> dict:
         """Execute the exhaustive fuzzing phase."""
         target_url = state.get("target_url", "")
+        if not target_url:
+            logger.warning("fuzzer_no_target_url")
+            return {"current_phase": "fuzzing_skipped"}
         existing_endpoints = list(state.get("discovered_endpoints", []))
         osint_endpoints = list(state.get("hidden_surface_map", []))
 
@@ -341,9 +344,7 @@ class FuzzerAgent:
 
         if shutil.which("ffuf"):
             # Check for SecLists wordlist
-            wordlist = (
-                "/app/data/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt"
-            )
+            wordlist = "/app/data/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt"
             if not os.path.exists(wordlist):
                 wordlist = "/app/data/seclists/Discovery/Web-Content/common.txt"
             if not os.path.exists(wordlist):
@@ -385,14 +386,15 @@ class FuzzerAgent:
 
         batch_results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in batch_results:
+            if isinstance(result, BaseException):
+                logger.debug("fuzz_dir_error", error=str(result))
+                continue
             if isinstance(result, dict) and "url" in result:
                 results.append(result)  # type: ignore[arg-type]
 
         return results
 
-    async def _fuzz_parameters(
-        self, target_url: str, endpoints: list[Endpoint]
-    ) -> list[Endpoint]:
+    async def _fuzz_parameters(self, target_url: str, endpoints: list[Endpoint]) -> list[Endpoint]:
         """Discover hidden parameters on known endpoints."""
         results: list[Endpoint] = []
 
@@ -414,14 +416,15 @@ class FuzzerAgent:
 
             batch = await asyncio.gather(*tasks, return_exceptions=True)
             for result in batch:
+                if isinstance(result, BaseException):
+                    logger.debug("fuzz_param_error", error=str(result))
+                    continue
                 if isinstance(result, dict) and result.get("found"):
                     results.append(
                         Endpoint(
                             url=ep_url,
                             method="GET",
-                            params=[
-                                {"name": result["param"], "type": "query", "value": ""}
-                            ],
+                            params=[{"name": result["param"], "type": "query", "value": ""}],
                             headers={},
                             content_type="",
                             requires_auth=False,
@@ -456,9 +459,7 @@ class FuzzerAgent:
 
         return {"found": False, "param": param}
 
-    async def _fuzz_osint_endpoints(
-        self, osint_endpoints: list[Endpoint]
-    ) -> list[Endpoint]:
+    async def _fuzz_osint_endpoints(self, osint_endpoints: list[Endpoint]) -> list[Endpoint]:
         """Verify that OSINT-discovered historical endpoints are still alive."""
         results: list[Endpoint] = []
         tasks = []
@@ -471,12 +472,13 @@ class FuzzerAgent:
         if tasks:
             batch = await asyncio.gather(*tasks, return_exceptions=True)
             for result in batch:
+                if isinstance(result, BaseException):
+                    logger.debug("fuzz_osint_error", error=str(result))
+                    continue
                 if isinstance(result, dict) and "url" in result:
                     results.append(result)  # type: ignore[arg-type]
 
-        logger.info(
-            "fuzzer_osint_verified", alive=len(results), total=len(osint_endpoints)
-        )
+        logger.info("fuzzer_osint_verified", alive=len(results), total=len(osint_endpoints))
         return results
 
     async def _fuzz_sensitive_files(self, target_url: str) -> list[Endpoint]:
@@ -519,6 +521,9 @@ class FuzzerAgent:
 
         batch = await asyncio.gather(*tasks, return_exceptions=True)
         for result in batch:
+            if isinstance(result, BaseException):
+                logger.debug("fuzz_sensitive_error", error=str(result))
+                continue
             if isinstance(result, dict) and "url" in result:
                 results.append(result)  # type: ignore[arg-type]
 

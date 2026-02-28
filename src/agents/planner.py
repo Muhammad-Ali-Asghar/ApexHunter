@@ -95,6 +95,9 @@ class PlannerAgent:
     async def run(self, state: ApexState) -> dict:
         """Execute the planning phase."""
         target_url = state.get("target_url", "")
+        if not target_url:
+            logger.error("planner_no_target_url")
+            return {"task_tree": [], "current_phase": "planning_skipped"}
         reduced = state.get("reduced_attack_surface", [])
         dom_sinks = state.get("dom_sink_logs", [])
         api_schemas = state.get("openapi_schemas", [])
@@ -107,9 +110,7 @@ class PlannerAgent:
         # Format the data for the LLM
         attack_surface_str = json.dumps(reduced[:100], indent=2, default=str)
         dom_sinks_str = (
-            json.dumps(dom_sinks[:20], indent=2, default=str)
-            if dom_sinks
-            else "None detected"
+            json.dumps(dom_sinks[:20], indent=2, default=str) if dom_sinks else "None detected"
         )
         api_schemas_str = (
             json.dumps(
@@ -147,9 +148,7 @@ class PlannerAgent:
             ]
 
             response = await self._llm.ainvoke(messages)
-            response_text = (
-                response.content if hasattr(response, "content") else str(response)
-            )
+            response_text = response.content if hasattr(response, "content") else str(response)
 
             # Parse the Task Tree from the LLM response
             task_tree = self._parse_task_tree(response_text)

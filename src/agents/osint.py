@@ -9,6 +9,7 @@ Implements strict retry-with-backoff logic as per the blueprint.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import Any
 from urllib.parse import urlparse, urljoin
@@ -36,9 +37,7 @@ class OSINTAgent:
     - AlienVault OTX for threat intelligence on the domain
     """
 
-    def __init__(
-        self, http_client: Any, max_retries: int = 3, retry_backoff: float = 5.0
-    ):
+    def __init__(self, http_client: Any, max_retries: int = 3, retry_backoff: float = 5.0):
         self._http = http_client
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
@@ -50,7 +49,10 @@ class OSINTAgent:
         Returns:
             Dict with updated state fields.
         """
-        target_url = state["target_url"]
+        target_url = state.get("target_url", "")
+        if not target_url:
+            logger.warning("osint_no_target_url")
+            return {"historical_osint_data": [], "hidden_surface_map": []}
         parsed = urlparse(target_url)
         domain = parsed.netloc
 
@@ -67,9 +69,7 @@ class OSINTAgent:
             return_exceptions=True,
         )
 
-        wayback_urls: list[str] = (
-            results[0] if not isinstance(results[0], BaseException) else []
-        )
+        wayback_urls: list[str] = results[0] if not isinstance(results[0], BaseException) else []
         commoncrawl_urls: list[str] = (
             results[1] if not isinstance(results[1], BaseException) else []
         )
@@ -190,8 +190,8 @@ class OSINTAgent:
                 urls = [row[0] for row in data[1:] if isinstance(row, list) and row]
                 logger.info("wayback_results", count=len(urls))
                 return urls
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("wayback_parse_error", error=str(e))
 
         return []
 
@@ -225,12 +225,10 @@ class OSINTAgent:
         urls = []
         for line in response.text.strip().split("\n"):
             try:
-                import json
-
                 entry = json.loads(line)
                 if "url" in entry:
                     urls.append(entry["url"])
-            except Exception:
+            except (json.JSONDecodeError, KeyError):
                 continue
 
         logger.info("commoncrawl_results", count=len(urls))

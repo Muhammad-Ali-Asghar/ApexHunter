@@ -91,6 +91,11 @@ class GuardedHTTPClient:
         Returns:
             httpx.Response or None if blocked/failed.
         """
+        # 0. Input validation
+        if not url:
+            logger.warning("request_empty_url", method=method)
+            return None
+
         # 1. RoE Gatekeeper check
         try:
             self._gatekeeper.validate_url(url)
@@ -174,9 +179,7 @@ class GuardedHTTPClient:
         except httpx.ConnectError as e:
             elapsed_ms = (time.time() - start_time) * 1000
             self._breaker.record_request(status_code=502, response_time_ms=elapsed_ms)
-            logger.warning(
-                "request_connect_error", method=method, url=url, error=str(e)
-            )
+            logger.warning("request_connect_error", method=method, url=url, error=str(e))
             return None
         except Exception as e:
             elapsed_ms = (time.time() - start_time) * 1000

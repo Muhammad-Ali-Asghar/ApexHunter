@@ -120,8 +120,8 @@ def main(
     # Build the ApexConfig
     try:
         apex_config = ApexConfig(
-            target_url=scan_config["target_url"],
-            target_scope=scan_config["target_scope"],
+            target_url=scan_config.get("target_url", ""),
+            target_scope=scan_config.get("target_scope", ""),
             credentials=scan_config.get("credentials", []),
         )
     except Exception as e:
@@ -131,8 +131,8 @@ def main(
     # Generate or resume scan ID
     scan_id = resume or uuid.uuid4().hex[:12]
 
-    click.echo(f"  Target:   {scan_config['target_url']}")
-    click.echo(f"  Scope:    {scan_config['target_scope']}")
+    click.echo(f"  Target:   {scan_config.get('target_url', 'N/A')}")
+    click.echo(f"  Scope:    {scan_config.get('target_scope', 'N/A')}")
     click.echo(f"  Scan ID:  {scan_id}")
     click.echo(f"  Creds:    {len(scan_config.get('credentials', []))} role(s)")
     click.echo(f"  Planner:  {apex_config.llm.planner_provider}")
@@ -156,8 +156,8 @@ async def _run_scan(
 
     # Create initial state
     initial_state = create_initial_state(
-        target_url=scan_config["target_url"],
-        target_scope=scan_config["target_scope"],
+        target_url=scan_config.get("target_url", ""),
+        target_scope=scan_config.get("target_scope", ""),
         credentials=scan_config.get("credentials", []),
         scan_id=scan_id,
     )
@@ -173,9 +173,7 @@ async def _run_scan(
         db_path = os.path.join(apex_config.paths.state_dir, f"apex_{scan_id}.db")
         checkpointer = AsyncSqliteSaver.from_conn_string(db_path)
     except ImportError:
-        click.echo(
-            "  Warning: SQLite checkpointer unavailable. State will not persist."
-        )
+        click.echo("  Warning: SQLite checkpointer unavailable. State will not persist.")
 
     # Configure execution
     config = {"configurable": {"thread_id": scan_id}}

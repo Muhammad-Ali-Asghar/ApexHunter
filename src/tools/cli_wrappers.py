@@ -3,12 +3,17 @@ CLI Wrappers
 
 Python wrappers around external CLI tools (Nuclei, Nmap, ffuf, etc.)
 that parse their output into structured data for the LangGraph state.
+
+SECURITY NOTE: All user-supplied parameters are passed as discrete
+arguments via create_subprocess_exec (never interpolated into a shell
+string) to prevent command injection.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import tempfile
 import os
 from typing import Any, Optional
@@ -18,10 +23,11 @@ import structlog
 logger = structlog.get_logger("apexhunter.tools.cli_wrappers")
 
 
-async def _run_command(cmd: str, timeout: int = 300) -> tuple[int, str, str]:
-    """Run a shell command and return (returncode, stdout, stderr)."""
-    proc = await asyncio.create_subprocess_shell(
-        cmd,
+async def _run_command(args: list[str], timeout: int = 300) -> tuple[int, str, str]:
+    """Run a command with explicit argument list and return (returncode, stdout, stderr)."""
+    logger.debug("cli_exec", cmd=args[0], args_count=len(args))
+    proc = await asyncio.create_subprocess_exec(
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -33,7 +39,10 @@ async def _run_command(cmd: str, timeout: int = 300) -> tuple[int, str, str]:
             stderr.decode("utf-8", errors="replace"),
         )
     except asyncio.TimeoutError:
-        proc.kill()
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
         return -1, "", "Command timed out"
 
 
@@ -60,20 +69,30 @@ async def run_nuclei(
         List of findings as dicts.
     """
     output_file = tempfile.mktemp(suffix=".json")
-    cmd = f"nuclei -u {target} -jsonl -o {output_file} -rate-limit {rate_limit} -silent"
+    args = [
+        "nuclei",
+        "-u",
+        target,
+        "-jsonl",
+        "-o",
+        output_file,
+        "-rate-limit",
+        str(rate_limit),
+        "-silent",
+    ]
 
     if templates:
         for t in templates:
-            cmd += f" -t {t}"
+            args.extend(["-t", t])
 
     if severity:
-        cmd += f" -severity {severity}"
+        args.extend(["-severity", severity])
 
     if tags:
-        cmd += f" -tags {','.join(tags)}"
+        args.extend(["-tags", ",".join(tags)])
 
-    logger.info("nuclei_start", target=target, cmd=cmd)
-    returncode, stdout, stderr = await _run_command(cmd, timeout=timeout)
+    logger.info("nuclei_start", target=target)
+    returncode, stdout, stderr = await _run_command(args, timeout=timeout)
 
     findings = []
     if os.path.exists(output_file):
@@ -110,10 +129,13 @@ async def run_nmap(
         Parsed scan results.
     """
     output_file = tempfile.mktemp(suffix=".xml")
-    cmd = f"nmap {scan_type} -p {ports} {target} -oX {output_file} --open"
+    args = ["nmap"]
+    # scan_type may contain multiple flags like "-sV -sC", split them
+    args.extend(shlex.split(scan_type))
+    args.extend(["-p", ports, target, "-oX", output_file, "--open"])
 
     logger.info("nmap_start", target=target, ports=ports)
-    returncode, stdout, stderr = await _run_command(cmd, timeout=timeout)
+    returncode, stdout, stderr = await _run_command(args, timeout=timeout)
 
     result = {"target": target, "raw_output": stdout, "ports": []}
 
@@ -176,17 +198,28 @@ async def run_ffuf(
         List of discovered endpoints.
     """
     output_file = tempfile.mktemp(suffix=".json")
-    cmd = (
-        f"ffuf -u {target_url} -w {wordlist} "
-        f"-mc {match_codes} -rate {rate_limit} "
-        f"-o {output_file} -of json -s"
-    )
+    args = [
+        "ffuf",
+        "-u",
+        target_url,
+        "-w",
+        wordlist,
+        "-mc",
+        match_codes,
+        "-rate",
+        str(rate_limit),
+        "-o",
+        output_file,
+        "-of",
+        "json",
+        "-s",
+    ]
 
     if extensions:
-        cmd += f" -e {extensions}"
+        args.extend(["-e", extensions])
 
     logger.info("ffuf_start", target=target_url)
-    returncode, stdout, stderr = await _run_command(cmd, timeout=timeout)
+    returncode, stdout, stderr = await _run_command(args, timeout=timeout)
 
     results = []
     if os.path.exists(output_file):
@@ -219,9 +252,9 @@ async def run_wafw00f(target: str, timeout: int = 60) -> dict[str, Any]:
     Returns:
         WAF detection result.
     """
-    cmd = f"wafw00f {target} -o /dev/stdout -f json"
+    args = ["wafw00f", target, "-o", "/dev/stdout", "-f", "json"]
     logger.info("wafw00f_start", target=target)
-    returncode, stdout, stderr = await _run_command(cmd, timeout=timeout)
+    returncode, stdout, stderr = await _run_command(args, timeout=timeout)
 
     result = {"target": target, "detected": False, "waf_name": ""}
     try:
@@ -265,13 +298,22 @@ async def run_custom_nuclei_template(
     with open(template_file, "w") as f:
         f.write(template_content)
 
-    cmd = (
-        f"nuclei -u {target} -t {template_file} "
-        f"-jsonl -o {output_file} -rate-limit {rate_limit} -silent"
-    )
+    args = [
+        "nuclei",
+        "-u",
+        target,
+        "-t",
+        template_file,
+        "-jsonl",
+        "-o",
+        output_file,
+        "-rate-limit",
+        str(rate_limit),
+        "-silent",
+    ]
 
     logger.info("nuclei_custom_template_start", target=target)
-    returncode, stdout, stderr = await _run_command(cmd, timeout=timeout)
+    returncode, stdout, stderr = await _run_command(args, timeout=timeout)
 
     findings = []
     if os.path.exists(output_file):

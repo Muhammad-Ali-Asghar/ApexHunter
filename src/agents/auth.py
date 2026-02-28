@@ -111,12 +111,14 @@ class AuthAgent:
             Dict with updated auth_matrix and any auth vulnerabilities.
         """
         credentials = state.get("auth_credentials", [])
-        target_url = state["target_url"]
+        target_url = state.get("target_url", "")
+
+        if not target_url:
+            logger.warning("auth_no_target_url")
+            return {"auth_matrix": []}
 
         if not credentials:
-            logger.warning(
-                "auth_no_credentials", msg="No credentials provided, skipping auth"
-            )
+            logger.warning("auth_no_credentials", msg="No credentials provided, skipping auth")
             return {"auth_matrix": []}
 
         logger.info("auth_start", roles=len(credentials))
@@ -170,7 +172,7 @@ class AuthAgent:
                         owasp_category="A07:2021 - Identification and Authentication Failures",
                         severity=vuln.get("severity", "high"),
                         cvss_score=vuln.get("cvss", 7.5),
-                        affected_endpoint=state["target_url"],
+                        affected_endpoint=state.get("target_url", "unknown"),
                         affected_method="POST",
                         affected_param="Authorization",
                         evidence=vuln.get("evidence", ""),
@@ -255,7 +257,8 @@ class AuthAgent:
                             await elem.fill(username)
                             filled_user = True
                             break
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("auth_selector_skip", selector=sel, error=str(e))
                         continue
 
                 # Fill password
@@ -267,7 +270,8 @@ class AuthAgent:
                             await elem.fill(password)
                             filled_pass = True
                             break
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("auth_selector_skip", selector=sel, error=str(e))
                         continue
 
                 if not filled_user or not filled_pass:
@@ -284,7 +288,8 @@ class AuthAgent:
                             await elem.click()
                             submitted = True
                             break
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("auth_selector_skip", selector=sel, error=str(e))
                         continue
 
                 if not submitted:
@@ -294,12 +299,13 @@ class AuthAgent:
                 # Wait for navigation
                 try:
                     await page.wait_for_load_state("networkidle", timeout=10000)
-                except Exception:
+                except Exception as e:
+                    logger.debug("auth_load_state_timeout", role=role, error=str(e))
                     await asyncio.sleep(3)
 
                 # Capture cookies
                 cookies = await context.cookies()
-                cookie_dict = {c["name"]: c["value"] for c in cookies}
+                cookie_dict = {c.get("name", ""): c.get("value", "") for c in cookies}
 
                 # Check for JWT in localStorage or cookies
                 jwt_token = None
@@ -318,10 +324,8 @@ class AuthAgent:
                         if value and self._looks_like_jwt(value):
                             jwt_token = value
                             break
-                except Exception:
-                    pass
-
-                # Check cookies for JWT
+                except Exception as e:
+                    logger.debug("auth_localstorage_check_failed", role=role, error=str(e))
                 if not jwt_token:
                     for name, value in cookie_dict.items():
                         if self._looks_like_jwt(value):
@@ -356,9 +360,7 @@ class AuthAgent:
             logger.error("auth_error", role=role, error=str(e))
             return None
 
-    async def _authenticate_http(
-        self, target_url: str, cred: dict
-    ) -> Optional[AuthToken]:
+    async def _authenticate_http(self, target_url: str, cred: dict) -> Optional[AuthToken]:
         """
         Fallback: authenticate via direct HTTP POST when Playwright is unavailable.
         """
@@ -396,7 +398,7 @@ class AuthAgent:
                 if key in body:
                     jwt_token = body[key]
                     break
-        except Exception:
+        except (json.JSONDecodeError, ValueError, AttributeError):
             pass
 
         # Check Set-Cookie headers
@@ -435,7 +437,7 @@ class AuthAgent:
             decoded = base64.urlsafe_b64decode(header)
             data = json.loads(decoded)
             return "alg" in data or "typ" in data
-        except Exception:
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
             return False
 
     async def _analyze_jwt(self, token: AuthToken) -> dict:
@@ -461,7 +463,8 @@ class AuthAgent:
 
             header = json.loads(base64.urlsafe_b64decode(header_b64))
             payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        except Exception:
+        except Exception as e:
+            logger.debug("jwt_parse_failed", error=str(e))
             return results
 
         alg = header.get("alg", "").upper()
@@ -490,8 +493,7 @@ class AuthAgent:
                 results["severity"] = "critical"
                 results["cvss"] = 9.1
                 results["evidence"] = (
-                    f"JWT secret cracked via dictionary attack. "
-                    f"Secret: '{cracked_secret}'"
+                    f"JWT secret cracked via dictionary attack. Secret: '{cracked_secret}'"
                 )
                 results["remediation"] = (
                     "Use a strong, random secret key (minimum 256 bits). "
@@ -578,10 +580,8 @@ class AuthAgent:
                         if hmac.compare_digest(computed, expected_sig):
                             logger.warning("jwt_secret_cracked", secret=secret)
                             return secret
-        except Exception:
-            pass
-
-        return None
+        except Exception as e:
+            logger.debug("jwt_wordlist_load_error", error=str(e))
 
     async def re_authenticate(self, state: ApexState, role: str) -> Optional[AuthToken]:
         """
@@ -592,5 +592,5 @@ class AuthAgent:
         for cred in credentials:
             if cred.get("role") == role:
                 logger.info("auth_re_authenticate", role=role)
-                return await self._authenticate(state["target_url"], cred)
+                return await self._authenticate(state.get("target_url", ""), cred)
         return None

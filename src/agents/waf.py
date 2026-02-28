@@ -94,6 +94,20 @@ class WAFAgent:
         """Execute WAF detection and profiling."""
         target_url = state.get("target_url", "")
 
+        if not target_url:
+            logger.warning("waf_no_target_url")
+            return {
+                "waf_profile": WAFProfile(
+                    detected=False,
+                    waf_name="",
+                    block_status_code=0,
+                    block_indicators=[],
+                    evasion_techniques=[],
+                    safe_request_rate=10.0,
+                ),
+                "current_phase": "waf_skipped",
+            }
+
         logger.info("waf_detection_start", target=target_url)
 
         # Phase 1: Check response headers for WAF signatures
@@ -221,10 +235,7 @@ class WAFAgent:
                 break
 
             # Check for significant response change (redirect to captcha, etc.)
-            if (
-                abs(len(response.text) - baseline_length) > 1000
-                and status != baseline_status
-            ):
+            if abs(len(response.text) - baseline_length) > 1000 and status != baseline_status:
                 block_info["blocked"] = True
                 block_info["block_status"] = status
 

@@ -72,12 +72,8 @@ class ExecutorAgent:
         logger.info("executor_start", total_tasks=len(task_tree))
 
         completed_tasks: list[TaskItem] = list(state.get("completed_tasks", []))
-        vulnerabilities: list[Vulnerability] = list(
-            state.get("vulnerability_report", [])
-        )
-        state_changing: list[ProxyLogEntry] = list(
-            state.get("state_changing_requests", [])
-        )
+        vulnerabilities: list[Vulnerability] = list(state.get("vulnerability_report", []))
+        state_changing: list[ProxyLogEntry] = list(state.get("state_changing_requests", []))
 
         # Get pacing from WAF profile
         safe_rate = waf.get("safe_request_rate", 10.0)
@@ -172,9 +168,7 @@ class ExecutorAgent:
             "current_phase": "execution_complete",
         }
 
-    async def _route_task(
-        self, task: TaskItem, auth_matrix: list, state: ApexState
-    ) -> dict:
+    async def _route_task(self, task: TaskItem, auth_matrix: list, state: ApexState) -> dict:
         """Route a task to the appropriate execution path."""
         vuln_type = task.get("vuln_type", "")
         tool = task.get("recommended_tool", "custom_script")
@@ -326,7 +320,9 @@ class ExecutorAgent:
             unauth = responses["unauthenticated"]
             if unauth["status"] == 200 and unauth["length"] > 100:
                 vulnerable = True
-                evidence = f"Endpoint accessible without authentication (status: {unauth['status']})"
+                evidence = (
+                    f"Endpoint accessible without authentication (status: {unauth['status']})"
+                )
 
         return {
             "vulnerable": vulnerable,
@@ -339,9 +335,7 @@ class ExecutorAgent:
         """Test for TOCTOU race conditions with concurrent requests."""
         endpoint = task.get("target_endpoint", "")
         method = task.get("target_method", "POST")
-        concurrent_count = (
-            self._config.agent.max_concurrent_requests if self._config else 20
-        )
+        concurrent_count = self._config.agent.max_concurrent_requests if self._config else 20
 
         auth = auth_matrix[0] if auth_matrix else {}
         headers = dict(auth.get("headers", {}))
@@ -369,6 +363,9 @@ class ExecutorAgent:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Analyze: check for inconsistent responses (indicates race)
+        exceptions = [r for r in results if isinstance(r, BaseException)]
+        if exceptions:
+            logger.warning("race_condition_errors", count=len(exceptions), first=str(exceptions[0]))
         valid_results = [r for r in results if isinstance(r, dict) and r.get("status")]
         statuses = [r["status"] for r in valid_results]
         unique_statuses = set(statuses)
@@ -397,9 +394,7 @@ class ExecutorAgent:
         vuln_type = task.get("vuln_type", "")
 
         if vuln_type == "graphql_introspection":
-            introspection_query = (
-                '{"query":"{ __schema { types { name fields { name } } } }"}'
-            )
+            introspection_query = '{"query":"{ __schema { types { name fields { name } } } }"}'
             resp = await self._http.post(
                 endpoint,
                 json=json.loads(introspection_query),
@@ -436,12 +431,11 @@ class ExecutorAgent:
                             "evidence": "GraphQL query batching is enabled — potential DoS vector",
                             "details": {"batch_size": len(data)},
                         }
-                except Exception:
-                    pass
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.debug("graphql_batch_parse_error", error=str(e))
 
         return {"vulnerable": False}
 
-    # ── Path E: Infrastructure ─────────────────────────────
     async def _path_e_infrastructure(self, task: TaskItem) -> dict:
         """Test HTTP Request Smuggling and Cache Poisoning."""
         endpoint = task.get("target_endpoint", "")
@@ -610,9 +604,7 @@ class ExecutorAgent:
             return {"vulnerable": False}
 
         # Get baseline response
-        baseline = await self._http.request(
-            method=method, url=endpoint, auth_role="scanner"
-        )
+        baseline = await self._http.request(method=method, url=endpoint, auth_role="scanner")
         if baseline is None:
             return {"vulnerable": False}
 
@@ -751,6 +743,4 @@ class ExecutorAgent:
             "graphql_introspection": "Disable introspection in production. Implement query depth limiting.",
             "open_redirect": "Validate redirect URLs against a whitelist. Never use user-controlled redirect targets.",
         }
-        return remediations.get(
-            vuln_type, "Review and fix the identified vulnerability."
-        )
+        return remediations.get(vuln_type, "Review and fix the identified vulnerability.")

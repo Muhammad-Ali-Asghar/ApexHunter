@@ -134,6 +134,13 @@ class ScriptSandbox:
             Dict with 'status', 'output', and 'error' keys.
         """
         # 1. Validate
+        if not script or not script.strip():
+            return {
+                "status": "error",
+                "output": "",
+                "error": "Empty script provided",
+            }
+
         is_safe, error = self.validate_script(script)
         if not is_safe:
             logger.warning("sandbox_blocked", reason=error)
@@ -166,9 +173,7 @@ class ScriptSandbox:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=exec_timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=exec_timeout)
 
             stdout_str = stdout.decode("utf-8", errors="replace").strip()
             stderr_str = stderr.decode("utf-8", errors="replace").strip()

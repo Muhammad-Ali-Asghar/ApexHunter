@@ -117,6 +117,10 @@ class ReconAgent:
         auth_matrix = state.get("auth_matrix", [])
         max_depth = self._config.target.max_depth if self._config else 10
 
+        if not target_url:
+            logger.error("recon_no_target_url")
+            return {"current_phase": "recon_skipped"}
+
         logger.info("recon_start", target=target_url, max_depth=max_depth)
 
         # Phase 1: Hunt for API schemas
@@ -183,6 +187,9 @@ class ReconAgent:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for result in results:
+            if isinstance(result, BaseException):
+                logger.debug("schema_check_error", error=str(result))
+                continue
             if isinstance(result, dict) and result.get("found"):
                 self._api_schemas.append(result)
                 # Parse OpenAPI/Swagger to extract endpoints
@@ -203,9 +210,7 @@ class ReconAgent:
             if "json" in content_type or body.strip().startswith("{"):
                 try:
                     schema = json.loads(body)
-                    if any(
-                        k in schema for k in ["swagger", "openapi", "paths", "info"]
-                    ):
+                    if any(k in schema for k in ["swagger", "openapi", "paths", "info"]):
                         logger.info("api_schema_found", url=url)
                         return {
                             "found": True,
@@ -351,9 +356,7 @@ class ReconAgent:
                     self._visited_urls.add(url)
 
                     try:
-                        response = await page.goto(
-                            url, wait_until="networkidle", timeout=15000
-                        )
+                        response = await page.goto(url, wait_until="networkidle", timeout=15000)
                         if not response:
                             continue
 
@@ -413,9 +416,7 @@ class ReconAgent:
                                         form_data = json.loads(link)
                                         form_endpoint = Endpoint(
                                             url=form_data.get("action", url),
-                                            method=form_data.get(
-                                                "method", "POST"
-                                            ).upper(),
+                                            method=form_data.get("method", "POST").upper(),
                                             params=[
                                                 {
                                                     "name": inp["name"],
@@ -439,14 +440,12 @@ class ReconAgent:
 
                         # Collect DOM sink data
                         try:
-                            sinks = await page.evaluate(
-                                "() => window.__apex_dom_sinks || []"
-                            )
+                            sinks = await page.evaluate("() => window.__apex_dom_sinks || []")
                             for sink in sinks:
                                 sink["page_url"] = url
                                 self._dom_sinks.append(sink)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("dom_sink_collection_failed", url=url, error=str(e))
 
                     except Exception as e:
                         logger.debug("crawl_page_error", url=url, error=str(e))
@@ -455,9 +454,7 @@ class ReconAgent:
                 await browser.close()
 
         except ImportError:
-            logger.warning(
-                "playwright_not_available", msg="Falling back to HTTP-only recon"
-            )
+            logger.warning("playwright_not_available", msg="Falling back to HTTP-only recon")
             await self._crawl_http_only(target_url, max_depth)
 
     async def _crawl_http_only(self, target_url: str, max_depth: int) -> None:
