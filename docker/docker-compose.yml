@@ -1,0 +1,91 @@
+version: "3.9"
+
+services:
+  apexhunter:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: apexhunter-agent
+    restart: unless-stopped
+    environment:
+      # ── LLM Provider (uncomment your choice) ──────
+      # Azure OpenAI
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-gpt-4o}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
+      # AWS Bedrock
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - AWS_BEDROCK_MODEL_ID=${AWS_BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}
+      # Local (Ollama)
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3}
+      # ── Provider Selection ─────────────────────────
+      - APEX_PLANNER_PROVIDER=${APEX_PLANNER_PROVIDER:-azure}
+      - APEX_EXECUTOR_PROVIDER=${APEX_EXECUTOR_PROVIDER:-ollama}
+      # ── Target Configuration ───────────────────────
+      - APEX_TARGET_URL=${APEX_TARGET_URL:-}
+      - APEX_TARGET_SCOPE=${APEX_TARGET_SCOPE:-}
+      # ── Agent Configuration ────────────────────────
+      - APEX_MAX_DEPTH=${APEX_MAX_DEPTH:-10}
+      - APEX_MAX_CONCURRENT=${APEX_MAX_CONCURRENT:-20}
+      - APEX_CIRCUIT_BREAKER_THRESHOLD=${APEX_CIRCUIT_BREAKER_THRESHOLD:-5}
+      - APEX_AUTOSLEEP_DURATION=${APEX_AUTOSLEEP_DURATION:-900}
+      - APEX_RESUME_SPEED_FACTOR=${APEX_RESUME_SPEED_FACTOR:-0.5}
+    volumes:
+      - apex-state:/app/state
+      - apex-output:/app/output
+      - apex-logs:/app/logs
+      - apex-warc:/app/warc
+    networks:
+      - apexnet
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: apexhunter-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=apexhunter
+      - POSTGRES_PASSWORD=apexhunter_secret
+      - POSTGRES_DB=apexhunter_state
+    volumes:
+      - apex-pgdata:/var/lib/postgresql/data
+    networks:
+      - apexnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apexhunter"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mitmproxy:
+    image: mitmproxy/mitmproxy:latest
+    container_name: apexhunter-proxy
+    restart: unless-stopped
+    command: >
+      mitmdump
+      --set stream_large_bodies=10m
+      --set keep_host_header=true
+      -w /flows/traffic.flow
+    ports:
+      - "8080:8080"
+    volumes:
+      - apex-proxy-flows:/flows
+    networks:
+      - apexnet
+
+volumes:
+  apex-state:
+  apex-output:
+  apex-logs:
+  apex-warc:
+  apex-pgdata:
+  apex-proxy-flows:
+
+networks:
+  apexnet:
+    driver: bridge

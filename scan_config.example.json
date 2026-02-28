@@ -1,0 +1,22 @@
+{
+    "target_url": "https://example.com",
+    "target_scope": "^https?://(.*\\.)?example\\.com",
+    "credentials": [
+        {
+            "role": "admin",
+            "username": "admin@example.com",
+            "password": "AdminPass123!",
+            "login_url": "https://example.com/login"
+        },
+        {
+            "role": "user_a",
+            "username": "alice@example.com",
+            "password": "AlicePass123!"
+        },
+        {
+            "role": "user_b",
+            "username": "bob@example.com",
+            "password": "BobPass123!"
+        }
+    ]
+}
