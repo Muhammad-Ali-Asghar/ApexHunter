@@ -385,8 +385,8 @@ class FuzzerAgent:
 
         batch_results = await asyncio.gather(*tasks, return_exceptions=True)
         for result in batch_results:
-            if isinstance(result, Endpoint):
-                results.append(result)
+            if isinstance(result, dict) and "url" in result:
+                results.append(result)  # type: ignore[arg-type]
 
         return results
 
@@ -471,8 +471,8 @@ class FuzzerAgent:
         if tasks:
             batch = await asyncio.gather(*tasks, return_exceptions=True)
             for result in batch:
-                if isinstance(result, Endpoint):
-                    results.append(result)
+                if isinstance(result, dict) and "url" in result:
+                    results.append(result)  # type: ignore[arg-type]
 
         logger.info(
             "fuzzer_osint_verified", alive=len(results), total=len(osint_endpoints)
@@ -519,8 +519,8 @@ class FuzzerAgent:
 
         batch = await asyncio.gather(*tasks, return_exceptions=True)
         for result in batch:
-            if isinstance(result, Endpoint):
-                results.append(result)
+            if isinstance(result, dict) and "url" in result:
+                results.append(result)  # type: ignore[arg-type]
 
         return results
 
