@@ -83,6 +83,8 @@ class LLMProviderConfig(BaseSettings):
     gemini_oauth_creds_path: str = Field(
         default="~/.gemini/oauth_creds.json", alias="GEMINI_OAUTH_CREDS_PATH"
     )
+    gemini_oauth_client_id: str = Field(default="", alias="GEMINI_OAUTH_CLIENT_ID")
+    gemini_oauth_client_secret: str = Field(default="", alias="GEMINI_OAUTH_CLIENT_SECRET")
 
     class Config:
         env_file = ".env"
@@ -137,6 +139,11 @@ class PathConfig(BaseSettings):
     state_dir: str = Field(default="/app/state", alias="APEX_STATE_DIR")
     warc_dir: str = Field(default="/app/warc", alias="APEX_WARC_DIR")
     chroma_dir: str = Field(default="/app/data/chromadb")
+    proxy_url: Optional[str] = Field(default=None, alias="APEX_PROXY_URL")
+    db_url: str = Field(
+        default="postgresql://apexhunter:apexhunter_secret@apexhunter-db:5432/apexhunter_state",
+        alias="APEX_DB_URL",
+    )
 
     class Config:
         env_file = ".env"
@@ -174,9 +181,8 @@ class ApexConfig:
 
     def get_proxy_url(self) -> Optional[str]:
         """Return the internal mitmproxy URL, or None when running standalone."""
-        url = os.environ.get("APEX_PROXY_URL", "")
-        return url if url else None
+        return self.paths.proxy_url
 
     def get_db_url(self) -> str:
         """Return the PostgreSQL connection URL for the checkpointer."""
-        return "postgresql://apexhunter:apexhunter_secret@apexhunter-db:5432/apexhunter_state"
+        return self.paths.db_url

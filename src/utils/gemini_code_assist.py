@@ -165,10 +165,10 @@ class ChatGeminiCodeAssist(BaseChatModel):
         result = llm.invoke("Hello!")
     """
 
-    model: str = "gemini-2.5-flash"
-    creds_path: str = "~/.gemini/oauth_creds.json"
-    client_id: str = ""
-    client_secret: str = ""
+    model: str
+    creds_path: str
+    client_id: str
+    client_secret: str
     temperature: float = 0.1
     max_output_tokens: int = 8192
 
@@ -193,7 +193,7 @@ class ChatGeminiCodeAssist(BaseChatModel):
                 self._credentials = _load_and_refresh_credentials(
                     self.creds_path, self.client_id, self.client_secret
                 )
-                self._access_token = self._credentials.token
+                self._access_token = str(self._credentials.token)
                 logger.info(
                     "gemini_code_assist_token_refreshed",
                     token_prefix=self._access_token[:15] + "...",
@@ -207,24 +207,8 @@ class ChatGeminiCodeAssist(BaseChatModel):
                     project=self._project_id,
                 )
 
-            if needs_refresh:
-                logger.debug("gemini_code_assist_refreshing_token")
-                self._credentials = _load_and_refresh_credentials(
-                    self.creds_path, self.client_id, self.client_secret
-                )
-                self._access_token = self._credentials.token
-                logger.info(
-                    "gemini_code_assist_token_refreshed",
-                    token_prefix=self._access_token[:15] + "...",
-                )
-
-            if self._project_id is None:
-                self._project_id = _discover_project(self._access_token)
-                logger.info(
-                    "gemini_code_assist_project_discovered",
-                    project=self._project_id,
-                )
-
+            assert self._access_token is not None
+            assert self._project_id is not None
             return self._access_token, self._project_id
 
     def _generate(

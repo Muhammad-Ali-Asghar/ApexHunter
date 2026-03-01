@@ -39,66 +39,6 @@ def create_executor_llm(config: LLMProviderConfig) -> BaseChatModel:
     return _create_llm(config.executor_provider, config, temperature=0.0)
 
 
-def _load_gemini_cli_credentials(creds_path: str):
-    """
-    Load OAuth credentials from the Gemini CLI's oauth_creds.json
-    and return a google.oauth2.credentials.Credentials object that
-    supports automatic token refresh.
-
-    The Gemini CLI stores tokens at ~/.gemini/oauth_creds.json after
-    the user authenticates via `gemini` (OAuth browser flow). This
-    function reuses those tokens so ApexHunter gets the same generous
-    quota as the CLI — no API key needed.
-
-    Args:
-        creds_path: Path to oauth_creds.json (supports ~ expansion).
-
-    Returns:
-        A google.oauth2.credentials.Credentials instance.
-
-    Raises:
-        FileNotFoundError: If the creds file doesn't exist.
-        ValueError: If required fields are missing.
-    """
-    from google.oauth2.credentials import Credentials
-
-    expanded_path = os.path.expanduser(creds_path)
-    if not os.path.exists(expanded_path):
-        raise FileNotFoundError(
-            f"Gemini CLI OAuth credentials not found at {expanded_path}. "
-            f"Run `gemini` once to authenticate via the browser OAuth flow."
-        )
-
-    with open(expanded_path, "r") as f:
-        data = json.load(f)
-
-    access_token = data.get("access_token")
-    refresh_token = data.get("refresh_token")
-
-    if not refresh_token:
-        raise ValueError(
-            f"No refresh_token found in {expanded_path}. Re-run `gemini` to re-authenticate."
-        )
-
-    creds = Credentials(
-        token=access_token,
-        refresh_token=refresh_token,
-        token_uri=_GOOGLE_TOKEN_URI,
-        client_id=os.environ.get("GEMINI_OAUTH_CLIENT_ID", ""),
-        client_secret=os.environ.get("GEMINI_OAUTH_CLIENT_SECRET", ""),
-        scopes=["https://www.googleapis.com/auth/cloud-platform"],
-    )
-
-    logger.info(
-        "gemini_oauth_loaded",
-        creds_path=expanded_path,
-        has_access_token=bool(access_token),
-        has_refresh_token=bool(refresh_token),
-    )
-
-    return creds
-
-
 def _create_llm(
     provider: str,
     config: LLMProviderConfig,
@@ -184,8 +124,8 @@ def _create_llm(
         return ChatGeminiCodeAssist(
             model=config.gemini_model,
             creds_path=config.gemini_oauth_creds_path,
-            client_id=os.environ.get("GEMINI_OAUTH_CLIENT_ID", ""),
-            client_secret=os.environ.get("GEMINI_OAUTH_CLIENT_SECRET", ""),
+            client_id=config.gemini_oauth_client_id,
+            client_secret=config.gemini_oauth_client_secret,
             temperature=temperature,
             max_output_tokens=8192,
         )
