@@ -353,8 +353,11 @@ class ReconAgent:
                     # Normalize URL
                     parsed = urlparse(url)
                     target_parsed = urlparse(target_url)
-                    if parsed.netloc and parsed.netloc != target_parsed.netloc:
-                        continue
+
+                    # Looser hostname matching (allow ports to differ, or allow subdomains)
+                    if parsed.hostname and target_parsed.hostname:
+                        if not parsed.hostname.endswith(target_parsed.hostname):
+                            continue
 
                     self._visited_urls.add(url)
 
@@ -484,8 +487,9 @@ class ReconAgent:
                 absolute = urljoin(url, href)
                 parsed = urlparse(absolute)
                 target_parsed = urlparse(target_url)
-                if parsed.netloc == target_parsed.netloc:
-                    urls_to_visit.append((absolute, depth + 1))
+                if parsed.hostname and target_parsed.hostname:
+                    if parsed.hostname.endswith(target_parsed.hostname):
+                        urls_to_visit.append((absolute, depth + 1))
 
             # Extract forms
             for form in soup.find_all("form"):
@@ -540,7 +544,7 @@ class ReconAgent:
         try:
             import os
             import tempfile
-            from src.tools.cli_wrappers import execute_cli
+            from src.tools.cli_wrappers import _run_command
 
             headers_arg = []
             if auth and auth.get("headers"):
@@ -569,7 +573,7 @@ class ReconAgent:
                 "-silent",
             ] + headers_arg
 
-            await execute_cli(args, timeout=600)
+            await _run_command(args, timeout=600)
 
             if os.path.exists(out_file) and os.path.getsize(out_file) > 0:
                 with open(out_file, "r") as f:
