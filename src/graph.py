@@ -175,7 +175,26 @@ def build_graph(config: ApexConfig) -> StateGraph:
         """Node 4: DOM-Aware Reconnaissance (The Spider)."""
         logger.info("node_recon_start")
         try:
-            return await recon_agent.run(state)
+            result = await recon_agent.run(state)
+
+            # Save the raw discovered endpoints to output directory
+            scan_id = state.get("scan_id", "unknown")
+            crawl_path = os.path.join(config.paths.output_dir, f"apex_raw_crawl_{scan_id}.json")
+            discovered_endpoints = result.get("discovered_endpoints", [])
+
+            with open(crawl_path, "w") as f:
+                import json
+
+                json.dump(discovered_endpoints, f, indent=2, default=str)
+
+            print("\n" + "=" * 60)
+            print(f"  APEXHUNTER - RAW CRAWL COMPLETE")
+            print("=" * 60)
+            print(f"  Raw Endpoints Found (Playwright + Katana): {len(discovered_endpoints)}")
+            print(f"  Raw Crawl Map saved to: {crawl_path}")
+            print("=" * 60 + "\n")
+
+            return result
         except Exception as e:
             logger.error("node_recon_error", error=str(e))
             return {
