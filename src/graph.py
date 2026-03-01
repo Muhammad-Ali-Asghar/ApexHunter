@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 import time
+import os
 from typing import Any
 
 import structlog
@@ -223,7 +224,34 @@ def build_graph(config: ApexConfig) -> StateGraph:
         """Node 8: Threat & Logic Planner (Cloud LLM)."""
         logger.info("node_planner_start")
         try:
-            return await planner_agent.run(state)
+            result = await planner_agent.run(state)
+            task_tree = result.get("task_tree", [])
+
+            # Save the plan to output directory for user inspection
+            scan_id = state.get("scan_id", "unknown")
+            plan_path = os.path.join(config.paths.output_dir, f"apex_plan_{scan_id}.json")
+            with open(plan_path, "w") as f:
+                import json
+
+                json.dump([t for t in task_tree], f, indent=2)
+
+            # Print the plan loudly to console
+            print("\n" + "=" * 60)
+            print(f"  APEXHUNTER - EXECUTION PLAN GENERATED")
+            print("=" * 60)
+            print(f"  Total Tasks Planned: {len(task_tree)}")
+            print(f"  Plan saved to: {plan_path}")
+            print("-" * 60)
+            for i, t in enumerate(task_tree[:10], 1):
+                method = t.get("target_method", "GET")
+                endpoint = t.get("target_endpoint", "")
+                vuln = t.get("vuln_type", "unknown")
+                print(f"  {i:02d}. [{vuln.upper()}] {method} {endpoint}")
+            if len(task_tree) > 10:
+                print(f"  ... and {len(task_tree) - 10} more tasks.")
+            print("=" * 60 + "\n")
+
+            return result
         except Exception as e:
             logger.error("node_planner_error", error=str(e))
             return {
@@ -377,9 +405,7 @@ def build_graph(config: ApexConfig) -> StateGraph:
     graph.add_conditional_edges(
         "pivot",
         lambda state: (
-            "planner"
-            if state.get("current_phase") == "pivot_to_planner"
-            else "second_order"
+            "planner" if state.get("current_phase") == "pivot_to_planner" else "second_order"
         ),
         {
             "planner": "planner",
