@@ -211,7 +211,29 @@ def build_graph(config: ApexConfig) -> StateGraph:
         """Node 7: Semantic Attack Surface Reducer."""
         logger.info("node_reducer_start")
         try:
-            return reducer_agent.run(state)
+            result = reducer_agent.run(state)
+
+            # Save the reduced attack surface to output directory
+            scan_id = state.get("scan_id", "unknown")
+            surface_path = os.path.join(
+                config.paths.output_dir, f"apex_attack_surface_{scan_id}.json"
+            )
+            reduced_surface = result.get("reduced_attack_surface", [])
+
+            with open(surface_path, "w") as f:
+                import json
+
+                # Handle non-serializable objects (like datetime) if present
+                json.dump(reduced_surface, f, indent=2, default=str)
+
+            print("\n" + "=" * 60)
+            print(f"  APEXHUNTER - RECONNAISSANCE COMPLETE")
+            print("=" * 60)
+            print(f"  Total Endpoints Discovered: {len(reduced_surface)}")
+            print(f"  Attack Surface Map saved to: {surface_path}")
+            print("=" * 60 + "\n")
+
+            return result
         except Exception as e:
             logger.error("node_reducer_error", error=str(e))
             return {
