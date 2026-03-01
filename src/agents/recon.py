@@ -362,9 +362,13 @@ class ReconAgent:
                     self._visited_urls.add(url)
 
                     try:
+                        logger.info("playwright_navigating", url=url, depth=depth)
                         response = await page.goto(url, wait_until="networkidle", timeout=15000)
                         if not response:
+                            logger.warning("playwright_no_response", url=url)
                             continue
+
+                        logger.info("playwright_response_received", url=url, status=response.status)
 
                         # Record endpoint
                         endpoint = Endpoint(
@@ -413,6 +417,8 @@ class ReconAgent:
                             });
                             return links;
                         }""")
+
+                        logger.info("playwright_extracted_links", url=url, total_found=len(links))
 
                         for link in links:
                             if isinstance(link, str):
@@ -475,10 +481,17 @@ class ReconAgent:
                 continue
 
             self._visited_urls.add(url)
+            logger.info("fallback_crawl_navigating", url=url, depth=depth)
             response = await self._http.get(url, auth_role="scanner")
             if response is None or response.status_code >= 400:
+                logger.warning(
+                    "fallback_crawl_failed",
+                    url=url,
+                    status=response.status_code if response else "None",
+                )
                 continue
 
+            logger.info("fallback_crawl_response", url=url, status=response.status_code)
             soup = BeautifulSoup(response.text, "html.parser")
 
             # Extract links
@@ -588,6 +601,7 @@ class ReconAgent:
                             if not url or url in self._visited_urls:
                                 continue
 
+                            logger.info("katana_found_endpoint", method=method, url=url)
                             self._visited_urls.add(url)
 
                             # Parse parameters from URL or Body
