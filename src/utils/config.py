@@ -73,8 +73,13 @@ class LLMProviderConfig(BaseSettings):
     )
     ollama_model: str = Field(default="llama3", alias="OLLAMA_MODEL")
 
-    # ── Google Gemini (via Gemini CLI OAuth) ──────
+    # ── Google Gemini ────────────────────────────────
+    # Mode 1 (simple): Set GEMINI_API_KEY for the Developer API.
+    # Mode 2 (OAuth):  Set GEMINI_OAUTH_CREDS_PATH + GEMINI_PROJECT for Vertex AI
+    #                  with Gemini CLI OAuth tokens (higher quotas).
     gemini_model: str = Field(default="gemini-2.5-pro", alias="GEMINI_MODEL")
+    gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
+    gemini_project: Optional[str] = Field(default=None, alias="GEMINI_PROJECT")
     gemini_oauth_creds_path: str = Field(
         default="~/.gemini/oauth_creds.json", alias="GEMINI_OAUTH_CREDS_PATH"
     )
@@ -167,9 +172,10 @@ class ApexConfig:
         ]:
             os.makedirs(d, exist_ok=True)
 
-    def get_proxy_url(self) -> str:
-        """Return the internal mitmproxy URL."""
-        return "http://apexhunter-proxy:8080"
+    def get_proxy_url(self) -> Optional[str]:
+        """Return the internal mitmproxy URL, or None when running standalone."""
+        url = os.environ.get("APEX_PROXY_URL", "")
+        return url if url else None
 
     def get_db_url(self) -> str:
         """Return the PostgreSQL connection URL for the checkpointer."""

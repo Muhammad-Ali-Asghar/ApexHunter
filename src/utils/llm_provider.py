@@ -161,13 +161,31 @@ def _create_llm(
 
     elif provider == "gemini":
         logger.info("llm_provider_gemini", model=config.gemini_model)
-        from langchain_google_genai import ChatGoogleGenerativeAI
 
-        creds = _load_gemini_cli_credentials(config.gemini_oauth_creds_path)
+        # Mode 1: API key (Developer API) — simplest
+        if config.gemini_api_key:
+            logger.info("gemini_mode_api_key")
+            from langchain_google_genai import ChatGoogleGenerativeAI
 
-        return ChatGoogleGenerativeAI(
+            return ChatGoogleGenerativeAI(
+                model=config.gemini_model,
+                google_api_key=config.gemini_api_key,
+                temperature=temperature,
+                max_output_tokens=8192,
+            )
+
+        # Mode 2: OAuth via Gemini CLI → Code Assist API
+        # Uses the same internal API as the Gemini CLI and OpenCode.
+        # No API key or GCP project setup required — project is
+        # auto-discovered from the Code Assist backend.
+        logger.info("gemini_mode_code_assist_oauth")
+        from src.utils.gemini_code_assist import ChatGeminiCodeAssist
+
+        return ChatGeminiCodeAssist(
             model=config.gemini_model,
-            credentials=creds,
+            creds_path=config.gemini_oauth_creds_path,
+            client_id=os.environ.get("GEMINI_OAUTH_CLIENT_ID", ""),
+            client_secret=os.environ.get("GEMINI_OAUTH_CLIENT_SECRET", ""),
             temperature=temperature,
             max_output_tokens=8192,
         )

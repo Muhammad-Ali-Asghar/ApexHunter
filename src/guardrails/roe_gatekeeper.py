@@ -25,8 +25,7 @@ class RoEViolation(Exception):
         self.url = url
         self.scope = scope
         super().__init__(
-            f"RoE VIOLATION: URL '{url}' is outside authorized scope '{scope}'. "
-            f"Request BLOCKED."
+            f"RoE VIOLATION: URL '{url}' is outside authorized scope '{scope}'. Request BLOCKED."
         )
 
 
@@ -37,7 +36,29 @@ class RoEGatekeeper:
     Validates every outbound URL against a compiled regex pattern
     derived from the authorized target scope. Acts as a hard firewall
     that no LLM hallucination or script can bypass.
+
+    OSINT-safe domains (Wayback Machine, CommonCrawl, OTX, etc.) are
+    allowlisted because they are passive reconnaissance lookups — not
+    active attacks — and must be reachable even when the target scope
+    is narrow (e.g., ``localhost:3000``).
     """
+
+    # Passive OSINT sources that are always allowed through.
+    # These are read-only lookup APIs, not attack targets.
+    _OSINT_SAFE_HOSTS: set[str] = {
+        "web.archive.org",
+        "index.commoncrawl.org",
+        "data.commoncrawl.org",
+        "otx.alienvault.com",
+        "crt.sh",
+        "api.shodan.io",
+        "censys.io",
+        "search.censys.io",
+        "urlscan.io",
+        "api.urlscan.io",
+        "www.virustotal.com",
+        "haveibeenpwned.com",
+    }
 
     def __init__(self, scope_regex: str):
         """
@@ -48,16 +69,11 @@ class RoEGatekeeper:
         self._scope_pattern = re.compile(scope_regex, re.IGNORECASE)
         self._blocked_count = 0
         self._allowed_count = 0
-        # Always block these regardless of scope
-        self._always_blocked = [
-            r"169\.254\.169\.254",  # AWS metadata (block outbound)
-            r"metadata\.google\.internal",
-            r"localhost",
-            r"127\.0\.0\.1",
-            r"0\.0\.0\.0",
-        ]
-        self._blocked_patterns = [
-            re.compile(p, re.IGNORECASE) for p in self._always_blocked
+        # Always block requests whose **host** matches these patterns
+        # (cloud metadata services, link-local, etc.)
+        self._always_blocked_host = [
+            re.compile(r"169\.254\.169\.254", re.IGNORECASE),
+            re.compile(r"metadata\.google\.internal", re.IGNORECASE),
         ]
         logger.info(
             "roe_gatekeeper_initialized",
@@ -78,20 +94,27 @@ class RoEGatekeeper:
             RoEViolation: If the URL is outside the authorized scope.
         """
         parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
         full_url = url.lower()
 
-        # Check always-blocked patterns first
-        for pattern in self._blocked_patterns:
-            if pattern.search(full_url):
+        # 1. Block cloud-metadata / link-local hosts (checked against host only)
+        for pattern in self._always_blocked_host:
+            if pattern.search(host):
                 self._blocked_count += 1
                 logger.warning(
                     "roe_blocked_dangerous",
                     url=url,
-                    reason="matches always-blocked pattern",
+                    reason="matches always-blocked host pattern",
                 )
                 raise RoEViolation(url, self._scope_pattern.pattern)
 
-        # Check against the authorized scope
+        # 2. Allow known passive OSINT lookup services
+        if host in self._OSINT_SAFE_HOSTS:
+            self._allowed_count += 1
+            logger.debug("roe_allowed_osint", url=url, host=host)
+            return True
+
+        # 3. Check against the authorized scope
         if not self._scope_pattern.search(full_url):
             self._blocked_count += 1
             logger.warning(

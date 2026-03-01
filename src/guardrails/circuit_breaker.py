@@ -66,6 +66,7 @@ class AdaptiveCircuitBreaker:
         self._sleep_until: Optional[float] = None
         self._total_trips = 0
         self._speed_factor = 1.0
+        self._sleep_logged = False
 
         # Counters
         self._total_requests = 0
@@ -180,6 +181,7 @@ class AdaptiveCircuitBreaker:
         self._state = self.OPEN
         self._sleep_until = time.time() + self._sleep_duration
         self._total_trips += 1
+        self._sleep_logged = False
         logger.warning(
             "circuit_breaker_auto_sleep",
             sleep_seconds=self._sleep_duration,
@@ -197,27 +199,30 @@ class AdaptiveCircuitBreaker:
         if self._state == self.OPEN:
             if self._sleep_until and time.time() < self._sleep_until:
                 remaining = self._sleep_until - time.time()
-                logger.info(
-                    "circuit_breaker_sleeping",
-                    remaining_seconds=remaining,
-                )
+                # Only log once per sleep period, not per caller
+                if not self._sleep_logged:
+                    self._sleep_logged = True
+                    logger.info(
+                        "circuit_breaker_sleeping",
+                        remaining_seconds=round(remaining, 1),
+                    )
                 await asyncio.sleep(remaining)
 
-            # Transition to HALF_OPEN
-            self._state = self.HALF_OPEN
-            self._speed_factor = self._resume_factor
-            self._request_log.clear()
-            logger.info(
-                "circuit_breaker_half_open",
-                speed_factor=self._speed_factor,
-            )
+            # Only the first caller performs the state transition
+            if self._state == self.OPEN:
+                self._state = self.HALF_OPEN
+                self._speed_factor = self._resume_factor
+                self._request_log.clear()
+                self._sleep_logged = False
+                logger.info(
+                    "circuit_breaker_half_open",
+                    speed_factor=self._speed_factor,
+                )
 
         elif self._state == self.HALF_OPEN:
             # If we have enough good requests, close the breaker
             if len(self._request_log) >= 20:
-                error_count = sum(
-                    1 for r in self._request_log if 500 <= r["status_code"] < 600
-                )
+                error_count = sum(1 for r in self._request_log if 500 <= r["status_code"] < 600)
                 error_rate = (error_count / len(self._request_log)) * 100.0
 
                 if error_rate < self._error_threshold:
@@ -245,15 +250,9 @@ class AdaptiveCircuitBreaker:
     def get_metrics(self) -> dict:
         """Return current health metrics."""
         window = self._request_log
-        error_count = (
-            sum(1 for r in window if 500 <= r["status_code"] < 600) if window else 0
-        )
+        error_count = sum(1 for r in window if 500 <= r["status_code"] < 600) if window else 0
         error_rate = (error_count / len(window) * 100.0) if window else 0.0
-        avg_latency = (
-            (sum(r["response_time_ms"] for r in window) / len(window))
-            if window
-            else 0.0
-        )
+        avg_latency = (sum(r["response_time_ms"] for r in window) / len(window)) if window else 0.0
 
         return {
             "state": self._state,

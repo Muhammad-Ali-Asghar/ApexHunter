@@ -29,6 +29,7 @@ warc/
 *.db
 *.sqlite
 *.sqlite3
+scan_config.json
 
 # ── SecLists (large, mounted at runtime) ──────────
 data/seclists/*
