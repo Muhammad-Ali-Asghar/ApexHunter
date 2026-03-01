@@ -80,7 +80,10 @@ PLANNER_USER_TEMPLATE = """## Target Information
 ## Authentication Matrix
 Roles available: {auth_roles}
 
-Generate a comprehensive Task Tree for non-destructive vulnerability testing."""
+## Confirmed Vulnerabilities (Pivot Data)
+{confirmed_vulns}
+
+Generate a comprehensive Task Tree for non-destructive vulnerability testing. If there are Confirmed Vulnerabilities, generate tasks to deeply explore them (Impact Proofing). If the Attack Surface is empty and no vulnerabilities need pivoting, return an empty JSON array []."""
 
 
 class PlannerAgent:
@@ -98,17 +101,27 @@ class PlannerAgent:
         if not target_url:
             logger.error("planner_no_target_url")
             return {"task_tree": [], "current_phase": "planning_skipped"}
-        reduced = state.get("reduced_attack_surface", [])
+
+        # Take up to 20 untested endpoints for this iteration
+        untested = state.get("untested_surface", [])
+        batch_size = 20
+        batch = untested[:batch_size]
+        remaining_untested = untested[batch_size:]
+
+        if not batch and not state.get("vulnerability_report", []):
+            logger.info("planner_no_more_endpoints")
+            return {"task_tree": [], "current_phase": "planning_skipped"}
+
         dom_sinks = state.get("dom_sink_logs", [])
         api_schemas = state.get("openapi_schemas", [])
         tech = state.get("technology_fingerprint", {})
         waf = state.get("waf_profile", {})
         auth_matrix = state.get("auth_matrix", [])
 
-        logger.info("planner_start", endpoints=len(reduced))
+        logger.info("planner_start", batch_size=len(batch), remaining=len(remaining_untested))
 
         # Format the data for the LLM
-        attack_surface_str = json.dumps(reduced[:100], indent=2, default=str)
+        attack_surface_str = json.dumps(batch, indent=2, default=str)
         dom_sinks_str = (
             json.dumps(dom_sinks[:20], indent=2, default=str) if dom_sinks else "None detected"
         )
@@ -131,11 +144,12 @@ class PlannerAgent:
             tech_stack=json.dumps(tech, default=str),
             waf_detected=waf.get("detected", False),
             waf_name=waf.get("waf_name", "none"),
-            endpoint_count=len(reduced),
+            endpoint_count=len(state.get("reduced_attack_surface", [])),
             attack_surface=attack_surface_str[:8000],
             dom_sinks=dom_sinks_str[:2000],
             api_schemas=api_schemas_str[:2000],
             auth_roles=auth_roles,
+            confirmed_vulns=json.dumps(state.get("vulnerability_report", [])[-10:], default=str),
         )
 
         # Call the LLM
@@ -154,7 +168,7 @@ class PlannerAgent:
             task_tree = self._parse_task_tree(response_text)
 
             # Add standard tests that should always be run
-            task_tree.extend(self._generate_standard_tasks(state))
+            task_tree.extend(self._generate_standard_tasks(state, batch))
 
             # Deduplicate by (endpoint, vuln_type)
             seen = set()
@@ -169,15 +183,17 @@ class PlannerAgent:
 
             return {
                 "task_tree": deduped,
+                "untested_surface": remaining_untested,
                 "current_phase": "planning_complete",
             }
 
         except Exception as e:
             logger.error("planner_llm_error", error=str(e))
             # Fallback: generate a basic task tree without LLM
-            fallback_tasks = self._generate_standard_tasks(state)
+            fallback_tasks = self._generate_standard_tasks(state, batch)
             return {
                 "task_tree": fallback_tasks,
+                "untested_surface": remaining_untested,
                 "current_phase": "planning_complete",
                 "errors": list(state.get("errors", []))
                 + [{"phase": "planner", "error": str(e), "time": time.time()}],
@@ -227,50 +243,53 @@ class PlannerAgent:
 
         return tasks
 
-    def _generate_standard_tasks(self, state: ApexState) -> list[TaskItem]:
-        """Generate standard tasks that should always be tested."""
+    def _generate_standard_tasks(
+        self, state: ApexState, batch: list[dict[str, Any]]
+    ) -> list[TaskItem]:
+        """Generate standard tasks that should always be tested for the current batch."""
         target_url = state.get("target_url", "")
-        reduced = state.get("reduced_attack_surface", [])
         auth_matrix = state.get("auth_matrix", [])
         tasks: list[TaskItem] = []
 
-        # Security Headers Check
-        tasks.append(
-            TaskItem(
-                task_id=f"std-headers-{uuid.uuid4().hex[:6]}",
-                target_endpoint=target_url,
-                target_method="GET",
-                target_params=[],
-                vuln_type="missing_security_headers",
-                owasp_category="A05",
-                recommended_tool="direct_http",
-                payloads=[],
-                priority=3,
-                status="pending",
-                result=None,
+        # Only run these global checks on the very first iteration
+        if state.get("iteration_count", 0) == 0 and batch:
+            # Security Headers Check
+            tasks.append(
+                TaskItem(
+                    task_id=f"std-headers-{uuid.uuid4().hex[:6]}",
+                    target_endpoint=target_url,
+                    target_method="GET",
+                    target_params=[],
+                    vuln_type="missing_security_headers",
+                    owasp_category="A05",
+                    recommended_tool="direct_http",
+                    payloads=[],
+                    priority=3,
+                    status="pending",
+                    result=None,
+                )
             )
-        )
 
-        # CORS Misconfiguration
-        tasks.append(
-            TaskItem(
-                task_id=f"std-cors-{uuid.uuid4().hex[:6]}",
-                target_endpoint=target_url,
-                target_method="GET",
-                target_params=[],
-                vuln_type="cors_misconfiguration",
-                owasp_category="A05",
-                recommended_tool="direct_http",
-                payloads=[],
-                priority=2,
-                status="pending",
-                result=None,
+            # CORS Misconfiguration
+            tasks.append(
+                TaskItem(
+                    task_id=f"std-cors-{uuid.uuid4().hex[:6]}",
+                    target_endpoint=target_url,
+                    target_method="GET",
+                    target_params=[],
+                    vuln_type="cors_misconfiguration",
+                    owasp_category="A05",
+                    recommended_tool="direct_http",
+                    payloads=[],
+                    priority=2,
+                    status="pending",
+                    result=None,
+                )
             )
-        )
 
         # IDOR tests for endpoints with ID parameters
         if len(auth_matrix) >= 2:
-            for ep in reduced[:20]:
+            for ep in batch[:20]:
                 template = ep.get("template", "")
                 if "{id}" in template or "{uuid}" in template:
                     tasks.append(
@@ -290,7 +309,7 @@ class PlannerAgent:
                     )
 
         # Race condition tests for POST endpoints
-        for ep in reduced[:15]:
+        for ep in batch[:15]:
             if ep.get("method", "GET") in ("POST", "PUT", "PATCH"):
                 tasks.append(
                     TaskItem(

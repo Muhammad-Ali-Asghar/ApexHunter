@@ -42,6 +42,9 @@ RUN go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest 
 # ── Install interactsh-client (OOB Listener) ──────
 RUN go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest 2>/dev/null || true
 
+# ── Install Katana (Deep Crawler) ─────────────────
+RUN go install -v github.com/projectdiscovery/katana/cmd/katana@latest 2>/dev/null || true
+
 # ── Python Dependencies ───────────────────────────
 WORKDIR /app
 COPY requirements.txt .

@@ -114,6 +114,7 @@ class ReducerAgent:
 
         return {
             "reduced_attack_surface": reduced_surface,
+            "untested_surface": list(reduced_surface),
             "current_phase": "reduction_complete",
         }
 

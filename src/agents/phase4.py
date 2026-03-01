@@ -49,9 +49,7 @@ class OOBCheckerAgent:
         logger.info("oob_checker_start", listener=oob_url)
 
         oob_findings: list[dict] = list(state.get("oob_findings", []))
-        vulnerabilities: list[Vulnerability] = list(
-            state.get("vulnerability_report", [])
-        )
+        vulnerabilities: list[Vulnerability] = list(state.get("vulnerability_report", []))
 
         # Poll the interactsh API for interactions
         try:
@@ -130,17 +128,13 @@ class DifferentialReviewerAgent:
     async def run(self, state: ApexState) -> dict:
         """Execute differential analysis on all endpoints with parameters."""
         reduced_surface = state.get("reduced_attack_surface", [])
-        vulnerabilities: list[Vulnerability] = list(
-            state.get("vulnerability_report", [])
-        )
+        vulnerabilities: list[Vulnerability] = list(state.get("vulnerability_report", []))
 
         logger.info("reviewer_start", endpoints=len(reduced_surface))
 
         # Select endpoints with parameters for differential testing
         testable = [
-            ep
-            for ep in reduced_surface
-            if ep.get("params") and ep.get("method", "GET") == "GET"
+            ep for ep in reduced_surface if ep.get("params") and ep.get("method", "GET") == "GET"
         ][:30]  # Limit to 30 endpoints
 
         for ep in testable:
@@ -197,12 +191,8 @@ class DifferentialReviewerAgent:
         compares responses mathematically.
         """
         # Boolean-based differential
-        true_url = (
-            f"{url}?{param}=1 AND 1=1" if "?" not in url else f"{url}&{param}=1 AND 1=1"
-        )
-        false_url = (
-            f"{url}?{param}=1 AND 1=2" if "?" not in url else f"{url}&{param}=1 AND 1=2"
-        )
+        true_url = f"{url}?{param}=1 AND 1=1" if "?" not in url else f"{url}&{param}=1 AND 1=1"
+        false_url = f"{url}?{param}=1 AND 1=2" if "?" not in url else f"{url}&{param}=1 AND 1=2"
 
         start_true = time.time()
         true_resp = await self._http.get(true_url, auth_role="scanner")
@@ -277,13 +267,62 @@ class PivotLoopAgent:
     """
 
     def run(self, state: ApexState) -> dict:
-        """Check if we should pivot based on confirmed vulnerabilities."""
+        """Check if we should pivot based on confirmed vulnerabilities or untested endpoints."""
         vulnerabilities = state.get("vulnerability_report", [])
         pivot_count = state.get("pivot_count", 0)
-        max_pivots = state.get("max_pivots", 3)
+        iteration_count = state.get("iteration_count", 0)
+        max_pivots = state.get("max_pivots", 5)
         pivot_vulns = list(state.get("pivot_vulns", []))
+        untested = state.get("untested_surface", [])
 
-        # Pivot-worthy vulnerability types
+        # 1. Continue iteration if there are still untested endpoints
+        if len(untested) > 0 and iteration_count < 20:  # Max 20 batches (up to 400 endpoints)
+            logger.info(
+                "iteration_triggered",
+                remaining_endpoints=len(untested),
+                iteration=iteration_count + 1,
+            )
+            return {
+                "iteration_count": iteration_count + 1,
+                "current_phase": "pivot_to_planner",
+            }
+
+        # 2. Pivot-worthy vulnerability types
+        pivotable_types = {"ssrf", "lfi", "rce", "auth_bypass", "bac"}
+
+        should_pivot = False
+        for vuln in vulnerabilities:
+            vuln_type = vuln.get("vuln_type", "")
+            vuln_id = vuln.get("vuln_id", "")
+
+            if (
+                vuln_type in pivotable_types
+                and vuln_id not in pivot_vulns
+                and pivot_count < max_pivots
+            ):
+                should_pivot = True
+                pivot_vulns.append(vuln_id)
+                logger.info(
+                    "pivot_triggered",
+                    vuln_type=vuln_type,
+                    vuln_id=vuln_id,
+                    pivot_count=pivot_count + 1,
+                )
+                break
+
+        if should_pivot:
+            return {
+                "pivot_count": pivot_count + 1,
+                "pivot_vulns": pivot_vulns,
+                "current_phase": "pivot_to_planner",
+            }
+
+        return {
+            "pivot_vulns": pivot_vulns,
+            "current_phase": "pivot_complete",
+        }
+
+        # 2. Pivot-worthy vulnerability types
         pivotable_types = {"ssrf", "lfi", "rce", "auth_bypass", "bac"}
 
         should_pivot = False
@@ -338,9 +377,7 @@ class SecondOrderSweepAgent:
         """Execute the second-order sweep."""
         auth_matrix = state.get("auth_matrix", [])
         discovered_endpoints = state.get("discovered_endpoints", [])
-        vulnerabilities: list[Vulnerability] = list(
-            state.get("vulnerability_report", [])
-        )
+        vulnerabilities: list[Vulnerability] = list(state.get("vulnerability_report", []))
 
         logger.info("second_order_sweep_start")
 

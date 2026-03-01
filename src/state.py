@@ -146,6 +146,7 @@ class ApexState(TypedDict, total=False):
 
     # ── Planning ──────────────────────────────────
     reduced_attack_surface: list[dict[str, Any]]
+    untested_surface: list[dict[str, Any]]
     task_tree: list[TaskItem]
     rag_context: list[dict[str, Any]]
 
@@ -169,6 +170,7 @@ class ApexState(TypedDict, total=False):
     installed_tools: list[str]
 
     # ── Pivot Loop ────────────────────────────────
+    iteration_count: int
     pivot_count: int
     max_pivots: int
     pivot_vulns: list[str]  # vuln_ids that triggered pivots
@@ -207,6 +209,7 @@ def create_initial_state(
             safe_request_rate=10.0,
         ),
         reduced_attack_surface=[],
+        untested_surface=[],
         task_tree=[],
         rag_context=[],
         completed_tasks=[],
@@ -229,6 +232,7 @@ def create_initial_state(
             speed_factor=1.0,
         ),
         installed_tools=[],
+        iteration_count=0,
         pivot_count=0,
         max_pivots=3,
         pivot_vulns=[],

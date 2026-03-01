@@ -130,6 +130,9 @@ class ReconAgent:
         primary_auth = auth_matrix[0] if auth_matrix else None
         await self._crawl_with_playwright(target_url, primary_auth, max_depth)
 
+        # Phase 2.5: Deep map with Katana
+        await self._crawl_with_katana(target_url, primary_auth, max_depth)
+
         # Phase 3: Fingerprint technologies from captured data
         self._fingerprint_technologies()
 
@@ -528,6 +531,95 @@ class ReconAgent:
                     source="crawl",
                 )
             )
+
+    async def _crawl_with_katana(
+        self, target_url: str, auth: Optional[Any], max_depth: int
+    ) -> None:
+        """Use Katana to perform a deep crawl mapping all forms, inputs, and endpoints."""
+        logger.info("katana_crawl_start", target=target_url)
+        try:
+            import os
+            import tempfile
+            from src.tools.cli_wrappers import execute_cli
+
+            headers_arg = []
+            if auth and auth.get("headers"):
+                for k, v in auth["headers"].items():
+                    headers_arg.extend(["-H", f"{k}: {v}"])
+            if auth and auth.get("cookies"):
+                cookie_str = "; ".join([f"{k}={v}" for k, v in auth["cookies"].items()])
+                headers_arg.extend(["-H", f"Cookie: {cookie_str}"])
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp:
+                out_file = tmp.name
+
+            # Run katana
+            args = [
+                "katana",
+                "-u",
+                target_url,
+                "-d",
+                str(min(max_depth, 5)),  # Katana depth (5 is usually enough)
+                "-jc",  # Parse JS
+                "-kf",
+                "all",  # Keep all fields
+                "-j",  # JSON output
+                "-o",
+                out_file,
+                "-silent",
+            ] + headers_arg
+
+            await execute_cli(args, timeout=600)
+
+            if os.path.exists(out_file) and os.path.getsize(out_file) > 0:
+                with open(out_file, "r") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            data = json.loads(line)
+                            url = data.get("request", {}).get("endpoint", "")
+                            method = data.get("request", {}).get("method", "GET")
+
+                            if not url or url in self._visited_urls:
+                                continue
+
+                            self._visited_urls.add(url)
+
+                            # Parse parameters from URL or Body
+                            params = []
+                            parsed = urlparse(url)
+                            if parsed.query:
+                                for key, values in parse_qs(parsed.query).items():
+                                    params.append(
+                                        {
+                                            "name": key,
+                                            "value": values[0] if values else "",
+                                            "type": "query",
+                                        }
+                                    )
+
+                            # Record endpoint
+                            self._discovered_endpoints.append(
+                                Endpoint(
+                                    url=url,
+                                    method=method.upper(),
+                                    params=params,
+                                    headers={},
+                                    content_type="",
+                                    requires_auth=auth is not None,
+                                    source="katana",
+                                )
+                            )
+                        except Exception:
+                            pass
+
+            if os.path.exists(out_file):
+                os.remove(out_file)
+
+            logger.info("katana_crawl_complete", total_endpoints=len(self._discovered_endpoints))
+        except Exception as e:
+            logger.warning("katana_crawl_failed", error=str(e))
 
     def _fingerprint_technologies(self) -> None:
         """Fingerprint technologies from captured network data."""
