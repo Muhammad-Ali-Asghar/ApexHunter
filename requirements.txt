@@ -7,8 +7,7 @@ langgraph-checkpoint>=2.0.0
 langgraph-checkpoint-sqlite>=2.0.0
 
 # ── LLM Providers ─────────────────────────────────
-# Azure OpenAI
-langchain-azure>=0.0.1
+# Azure OpenAI (provided by langchain-openai above)
 openai>=1.50.0
 # AWS Bedrock
 boto3>=1.35.0

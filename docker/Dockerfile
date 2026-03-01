@@ -16,10 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     libssl-dev \
     chromium \
-    golang-go \
     jq \
     unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# ── Install Go 1.23 (Debian bookworm ships 1.19 which is too old for nuclei/ffuf) ──
+RUN curl -fsSL https://go.dev/dl/go1.23.8.linux-amd64.tar.gz | tar -C /usr/local -xz
 
 # ── Go bin path ────────────────────────────────────
 ENV GOPATH=/root/go
@@ -47,6 +49,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Install Playwright Browsers ───────────────────
 RUN playwright install --with-deps chromium
+
+# ── Fix PATH: Go tools (httpx, nuclei, etc.) must take priority ──
+# Python's httpx package installs a CLI at /usr/local/bin/httpx that
+# shadows ProjectDiscovery's Go-based httpx. Remove it.
+RUN rm -f /usr/local/bin/httpx 2>/dev/null || true
 
 # ── Copy Source Code ──────────────────────────────
 COPY src/ ./src/
