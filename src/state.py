@@ -117,6 +117,130 @@ class ProxyLogEntry(TypedDict, total=False):
     auth_role: str  # Which role's token was used
 
 
+class AttackSurface(TypedDict, total=False):
+    """An interactive element on a page that could be an attack vector."""
+
+    element_type: str  # "input", "textarea", "select", "form", "button", "link", "file_upload", "hidden_field", "contenteditable"
+    element_id: str
+    element_name: str
+    element_class: str
+    input_type: str  # For inputs: "text", "password", "email", "hidden", "file", etc.
+    form_action: str  # The form's action URL if this element belongs to a form
+    form_method: str  # GET/POST
+    placeholder: str
+    max_length: Optional[int]
+    pattern: str  # HTML5 validation pattern
+    accepts: str  # For file inputs: accepted MIME types
+    autocomplete: str
+    is_required: bool
+    current_value: str
+    aria_label: str
+    data_attributes: dict[str, str]  # All data-* attributes
+    event_handlers: list[str]  # Inline event handlers (onclick, onsubmit, etc.)
+    parent_form_id: str
+    xpath: str  # XPath to locate this element
+
+
+class NetworkCapture(TypedDict, total=False):
+    """A captured network request/response for a specific page."""
+
+    url: str
+    method: str
+    request_headers: dict[str, str]
+    request_body: str
+    response_status: int
+    response_headers: dict[str, str]
+    response_body_preview: str  # First 2000 chars
+    response_size: int
+    content_type: str
+    resource_type: (
+        str  # "xhr", "fetch", "document", "script", "stylesheet", "image", "websocket", "other"
+    )
+    timing_ms: float
+    is_third_party: bool
+    initiator: str  # What triggered this request (script URL or user action)
+    direction: str  # "outgoing" (sent by page) or "incoming" (loaded by page)
+
+
+class PageNode(TypedDict, total=False):
+    """A single page in the site tree structure."""
+
+    page_id: str
+    url: str
+    path: str  # URL path component
+    title: str
+    depth: int  # Depth in the site tree (0 = root)
+    parent_id: Optional[str]  # page_id of parent page
+    children_ids: list[str]  # page_ids of child pages
+    status_code: int
+    content_type: str
+    response_headers: dict[str, str]
+    discovered_via: str  # "crawl", "link", "form_action", "js_navigation", "osint", "sitemap"
+
+
+class PageCapture(TypedDict, total=False):
+    """Complete DOM and network capture for a single page."""
+
+    page_id: str
+    url: str
+    captured_at: float
+
+    # DOM Capture
+    html_content: str  # Full page HTML source
+    css_content: list[dict[str, str]]  # List of {url, content} for each stylesheet
+    inline_scripts: list[str]  # Inline <script> contents
+    external_scripts: list[dict[str, str]]  # List of {url, content_preview}
+    meta_tags: dict[str, str]  # All <meta> tag name/content pairs
+    page_title: str
+
+    # Attack Surface Discovery
+    attack_surfaces: list[AttackSurface]  # All interactive elements
+    forms: list[dict[str, Any]]  # Detailed form structures
+    links: list[dict[str, str]]  # All links: {href, text, rel, target}
+    iframes: list[dict[str, str]]  # Embedded iframes: {src, sandbox}
+    websocket_urls: list[str]  # WebSocket connections detected
+
+    # Network Activity
+    network_requests: list[NetworkCapture]  # All requests made by this page
+
+    # DOM Sink Activity
+    dom_sinks: list[dict[str, Any]]  # Dangerous DOM operations detected
+
+    # Cookies set/modified by this page
+    cookies_set: list[dict[str, Any]]
+
+    # Technology signals from this page
+    tech_signals: dict[str, Any]
+
+
+class PageAnalysis(TypedDict, total=False):
+    """AI-generated analysis of a page's security posture."""
+
+    page_id: str
+    url: str
+    analyzed_at: float
+
+    # AI Assessment
+    risk_score: float  # 0.0 - 10.0, AI-assigned
+    interest_level: str  # "high", "medium", "low", "skip"
+    reasoning: str  # Why the AI scored it this way
+
+    # Identified attack vectors (AI-generated, not hardcoded)
+    attack_vectors: list[
+        dict[str, Any]
+    ]  # Each: {type, target_element, technique, priority, description}
+
+    # Recommended tasks for this page
+    recommended_tasks: list[dict[str, Any]]
+
+    # Decision
+    should_deep_scan: bool  # AI decides whether to go deeper
+    deep_scan_focus: list[str]  # What to focus on if deep scanning
+
+    # Points of interest found after task execution
+    points_of_interest: list[dict[str, Any]]
+
+
 class ApexState(TypedDict, total=False):
     """
     The master LangGraph state object.
@@ -140,6 +264,15 @@ class ApexState(TypedDict, total=False):
     hidden_surface_map: list[Endpoint]
     technology_fingerprint: dict[str, Any]
     dom_sink_logs: list[dict[str, Any]]
+
+    # ── Site Tree & Per-Page Intelligence ─────────
+    site_tree: list[PageNode]  # Tree structure of all discovered pages
+    page_captures: list[PageCapture]  # DOM + network capture per page
+    page_analyses: list[PageAnalysis]  # AI analysis per page
+    current_page_index: int  # Which page we're currently analyzing
+    pages_completed: list[str]  # page_ids that have been fully processed
+    pages_requiring_deep_scan: list[str]  # page_ids flagged for deep analysis
+    deep_scan_active: bool  # Whether we're in deep scan mode for current page
 
     # ── WAF ───────────────────────────────────────
     waf_profile: WAFProfile
@@ -200,6 +333,13 @@ def create_initial_state(
         hidden_surface_map=[],
         technology_fingerprint={},
         dom_sink_logs=[],
+        site_tree=[],
+        page_captures=[],
+        page_analyses=[],
+        current_page_index=0,
+        pages_completed=[],
+        pages_requiring_deep_scan=[],
+        deep_scan_active=False,
         waf_profile=WAFProfile(
             detected=False,
             waf_name="",

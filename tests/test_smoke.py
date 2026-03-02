@@ -85,6 +85,14 @@ class TestState:
             "scan_start_time",
             "current_phase",
             "errors",
+            # Page-by-page architecture fields
+            "site_tree",
+            "page_captures",
+            "page_analyses",
+            "current_page_index",
+            "pages_completed",
+            "pages_requiring_deep_scan",
+            "deep_scan_active",
         ]
         for key in expected_keys:
             assert key in state, f"Missing key: {key}"
@@ -353,9 +361,7 @@ class TestAuthHelpers:
         import base64, json
 
         header = (
-            base64.urlsafe_b64encode(
-                json.dumps({"alg": "HS256", "typ": "JWT"}).encode()
-            )
+            base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
             .rstrip(b"=")
             .decode()
         )
@@ -378,14 +384,10 @@ class TestAuthHelpers:
         import base64, json, hmac, hashlib
 
         header = (
-            base64.urlsafe_b64encode(json.dumps({"alg": "HS256"}).encode())
-            .rstrip(b"=")
-            .decode()
+            base64.urlsafe_b64encode(json.dumps({"alg": "HS256"}).encode()).rstrip(b"=").decode()
         )
         payload = (
-            base64.urlsafe_b64encode(json.dumps({"sub": "test"}).encode())
-            .rstrip(b"=")
-            .decode()
+            base64.urlsafe_b64encode(json.dumps({"sub": "test"}).encode()).rstrip(b"=").decode()
         )
         signing_input = f"{header}.{payload}".encode()
         sig = (
@@ -408,20 +410,14 @@ class TestAuthHelpers:
         import base64, json, hmac, hashlib
 
         header = (
-            base64.urlsafe_b64encode(json.dumps({"alg": "HS256"}).encode())
-            .rstrip(b"=")
-            .decode()
+            base64.urlsafe_b64encode(json.dumps({"alg": "HS256"}).encode()).rstrip(b"=").decode()
         )
         payload = (
-            base64.urlsafe_b64encode(json.dumps({"sub": "test"}).encode())
-            .rstrip(b"=")
-            .decode()
+            base64.urlsafe_b64encode(json.dumps({"sub": "test"}).encode()).rstrip(b"=").decode()
         )
         signing_input = f"{header}.{payload}".encode()
         sig = (
-            base64.urlsafe_b64encode(
-                hmac.new(b"secret", signing_input, hashlib.sha256).digest()
-            )
+            base64.urlsafe_b64encode(hmac.new(b"secret", signing_input, hashlib.sha256).digest())
             .rstrip(b"=")
             .decode()
         )

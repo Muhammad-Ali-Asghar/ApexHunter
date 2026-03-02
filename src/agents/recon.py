@@ -681,7 +681,17 @@ class ReconAgent:
             logger.warning("katana_crawl_failed", error=str(e))
 
     def _fingerprint_technologies(self) -> None:
-        """Fingerprint technologies from captured network data."""
+        """
+        Fingerprint technologies from captured network data.
+
+        Collects raw signals (headers, URL patterns, response metadata)
+        without hardcoded library/framework detection rules. The raw
+        signals are stored for downstream LLM-driven interpretation.
+
+        NOTE: This agent is no longer in the main graph flow — it was
+        replaced by SiteCrawlerAgent + PageScannerAgent. Kept as an
+        optional utility.
+        """
         tech: dict[str, Any] = {
             "server": "",
             "framework": "",
@@ -689,33 +699,51 @@ class ReconAgent:
             "cms": "",
             "js_libraries": [],
             "cdn": "",
+            "raw_signals": [],
         }
+
+        seen_signals: set[str] = set()
 
         for req in self._network_requests:
             headers = req.get("headers", {})
             url = req.get("url", "")
 
-            # Server header
+            # Server header — direct signal, no interpretation needed
             server = headers.get("server", "")
-            if server:
+            if server and not tech["server"]:
                 tech["server"] = server
 
-            # X-Powered-By
+            # X-Powered-By — direct signal
             powered_by = headers.get("x-powered-by", "")
-            if powered_by:
+            if powered_by and not tech["framework"]:
                 tech["framework"] = powered_by
 
-            # Detect JS libraries from URLs
-            if "react" in url.lower() or "react" in str(headers):
-                tech["js_libraries"].append("React")
-            if "angular" in url.lower():
-                tech["js_libraries"].append("Angular")
-            if "vue" in url.lower():
-                tech["js_libraries"].append("Vue.js")
-            if "jquery" in url.lower():
-                tech["js_libraries"].append("jQuery")
-            if "next" in url.lower():
-                tech["js_libraries"].append("Next.js")
+            # Collect ALL response headers as raw signals for LLM analysis
+            for header_name, header_value in headers.items():
+                signal_key = f"header:{header_name.lower()}"
+                if signal_key not in seen_signals:
+                    seen_signals.add(signal_key)
+                    tech["raw_signals"].append(
+                        {
+                            "type": "response_header",
+                            "name": header_name,
+                            "value": str(header_value)[:200],
+                        }
+                    )
 
-        tech["js_libraries"] = list(set(tech["js_libraries"]))
+            # Collect script/resource URLs as raw signals
+            if url and req.get("resource_type") in ("script", "stylesheet", "fetch", "xhr"):
+                signal_key = f"resource:{url[:100]}"
+                if signal_key not in seen_signals:
+                    seen_signals.add(signal_key)
+                    tech["raw_signals"].append(
+                        {
+                            "type": "resource_url",
+                            "url": url[:500],
+                            "resource_type": req.get("resource_type", "unknown"),
+                        }
+                    )
+
+        # Cap raw signals to prevent state bloat
+        tech["raw_signals"] = tech["raw_signals"][:200]
         self._tech_fingerprint = tech

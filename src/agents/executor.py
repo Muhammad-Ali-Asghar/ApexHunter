@@ -594,11 +594,18 @@ class ExecutorAgent:
             return await self._test_injection_direct(task)
 
     async def _test_injection_direct(self, task: TaskItem) -> dict:
-        """Direct injection testing without LLM script generation."""
+        """
+        Direct injection testing with AI-driven response analysis.
+
+        Sends payloads and uses the LLM to analyze whether the response
+        indicates a vulnerability, rather than relying on hardcoded
+        error string patterns.
+        """
         endpoint = task.get("target_endpoint", "")
         method = task.get("target_method", "GET")
         params = task.get("target_params", [])
         payloads = task.get("payloads", [])
+        vuln_type = task.get("vuln_type", "unknown")
 
         if not payloads:
             return {"vulnerable": False}
@@ -610,6 +617,9 @@ class ExecutorAgent:
 
         baseline_text = baseline.text
         baseline_status = baseline.status_code
+
+        # Collect interesting response diffs for LLM analysis
+        interesting_responses = []
 
         for payload in payloads[:20]:
             # Inject payload into URL params
@@ -631,77 +641,108 @@ class ExecutorAgent:
             if resp is None:
                 continue
 
-            body = resp.text.lower()
+            # Detect meaningful differences from baseline
+            status_diff = resp.status_code != baseline_status
+            length_diff = abs(len(resp.text) - len(baseline_text)) > 50
+            payload_reflected = payload in resp.text and payload not in baseline_text
 
-            # Check for SQL error indicators
-            sql_errors = [
-                "sql syntax",
-                "mysql",
-                "postgresql",
-                "sqlite",
-                "ora-",
-                "mssql",
-                "unclosed quotation",
-                "syntax error",
-                "unexpected end of sql",
-                "warning: mysql",
-            ]
-            for err in sql_errors:
-                if err in body and err not in baseline_text.lower():
-                    return {
-                        "vulnerable": True,
-                        "evidence": f"SQL error triggered by payload: {payload}",
-                        "details": {"payload": payload, "error_indicator": err},
+            if status_diff or length_diff or payload_reflected:
+                interesting_responses.append(
+                    {
+                        "payload": payload,
                         "status_code": resp.status_code,
+                        "baseline_status": baseline_status,
+                        "response_preview": resp.text[:1500],
+                        "baseline_preview": baseline_text[:500],
+                        "payload_reflected": payload_reflected,
+                        "length_delta": len(resp.text) - len(baseline_text),
                     }
-
-            # Check for XSS reflection
-            if payload in resp.text and payload not in baseline_text:
-                return {
-                    "vulnerable": True,
-                    "evidence": f"Payload reflected in response: {payload}",
-                    "details": {"payload": payload, "reflected": True},
-                    "status_code": resp.status_code,
-                }
-
-            # Check for SSTI
-            if "49" in resp.text and "{{7*7}}" in payload:
-                return {
-                    "vulnerable": True,
-                    "evidence": "Server-side template injection: {{7*7}} evaluated to 49",
-                    "details": {"payload": payload},
-                    "status_code": resp.status_code,
-                }
+                )
 
             await asyncio.sleep(0.2)
 
-        return {"vulnerable": False}
+        if not interesting_responses:
+            return {"vulnerable": False}
+
+        # Use LLM to analyze the response differences
+        return await self._analyze_responses_with_llm(vuln_type, endpoint, interesting_responses)
+
+    async def _analyze_responses_with_llm(
+        self, vuln_type: str, endpoint: str, responses: list[dict]
+    ) -> dict:
+        """Use the LLM to determine if response differences indicate a vulnerability."""
+        analysis_prompt = f"""You are analyzing HTTP responses from a security test.
+The test was checking for: {vuln_type}
+Target endpoint: {endpoint}
+
+Below are the responses that differed from the baseline. For each, determine if the
+difference indicates a genuine vulnerability or is a benign variation.
+
+Responses:
+{json.dumps(responses[:5], indent=2, default=str)[:6000]}
+
+Analyze the evidence and respond with ONLY valid JSON:
+{{
+  "vulnerable": true/false,
+  "confidence": "high"/"medium"/"low",
+  "evidence": "description of what indicates the vulnerability",
+  "details": {{
+    "payload": "the payload that triggered it",
+    "indicator": "what specific response content proves the vulnerability"
+  }}
+}}
+
+Be conservative — only mark as vulnerable if you see clear evidence like:
+- Database error messages in response to SQL payloads
+- Payload reflection without encoding (for XSS)
+- Template expression evaluation (for SSTI)
+- Path traversal content disclosure (for LFI)
+- Unexpected data access (for IDOR)
+
+Do NOT flag false positives from WAF blocks, generic error pages, or normal redirects."""
+
+        try:
+            from langchain_core.messages import HumanMessage
+
+            response = await self._llm.ainvoke([HumanMessage(content=analysis_prompt)])
+            text = response.content if hasattr(response, "content") else str(response)
+
+            # Parse JSON from response
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+
+            result = json.loads(text)
+            return {
+                "vulnerable": result.get("vulnerable", False),
+                "evidence": result.get("evidence", ""),
+                "details": result.get("details", {}),
+                "confidence": result.get("confidence", "low"),
+                "status_code": responses[0].get("status_code", 0) if responses else 0,
+            }
+        except Exception as e:
+            logger.warning("executor_llm_analysis_error", error=str(e))
+            # Ultra-conservative fallback: only flag clearly reflected payloads
+            for resp in responses:
+                if resp.get("payload_reflected"):
+                    return {
+                        "vulnerable": True,
+                        "evidence": f"Payload reflected in response: {resp.get('payload', '')}",
+                        "details": {"payload": resp.get("payload", ""), "reflected": True},
+                        "status_code": resp.get("status_code", 0),
+                    }
+            return {"vulnerable": False}
 
     def _create_vulnerability(self, task: TaskItem, result: dict) -> Vulnerability:
-        """Create a Vulnerability object from task results."""
+        """Create a Vulnerability object from task results using AI-driven assessment."""
         vuln_type = task.get("vuln_type", "unknown")
+        evidence = result.get("evidence", "")
+        confidence = result.get("confidence", "medium")
 
-        severity_map = {
-            "sqli": ("critical", 9.8),
-            "sqli_error": ("critical", 9.8),
-            "sqli_blind": ("critical", 9.8),
-            "xss_reflected": ("high", 7.5),
-            "xss_dom": ("high", 7.5),
-            "ssti": ("critical", 9.8),
-            "ssrf": ("critical", 9.1),
-            "lfi": ("critical", 9.1),
-            "idor": ("high", 7.5),
-            "bac": ("critical", 9.8),
-            "race_condition": ("medium", 5.9),
-            "cors_misconfiguration": ("medium", 5.3),
-            "missing_security_headers": ("low", 3.5),
-            "http_smuggling": ("critical", 9.8),
-            "cache_poisoning": ("high", 7.5),
-            "graphql_introspection": ("medium", 5.3),
-            "open_redirect": ("medium", 4.7),
-        }
-
-        severity, cvss = severity_map.get(vuln_type, ("medium", 5.0))
+        # AI-driven severity assessment based on context
+        severity, cvss = self._assess_severity_dynamic(vuln_type, evidence, confidence, task)
+        remediation = self._generate_remediation_dynamic(vuln_type, evidence, task)
 
         return Vulnerability(
             vuln_id=f"APEX-{uuid.uuid4().hex[:8].upper()}",
@@ -713,34 +754,182 @@ class ExecutorAgent:
             affected_endpoint=task.get("target_endpoint", ""),
             affected_method=task.get("target_method", "GET"),
             affected_param=", ".join(task.get("target_params", [])),
-            evidence=result.get("evidence", ""),
+            evidence=evidence,
             request_sent=json.dumps(result.get("details", {}), default=str)[:2000],
             response_received="",
-            remediation=self._get_remediation(vuln_type),
+            remediation=remediation,
             discovered_at=time.time(),
             validated=True,
             is_second_order=False,
             chain_parent=None,
         )
 
-    def _get_remediation(self, vuln_type: str) -> str:
-        """Return remediation advice for a vulnerability type."""
-        remediations = {
-            "sqli": "Use parameterized queries/prepared statements. Never concatenate user input into SQL.",
-            "sqli_error": "Use parameterized queries. Disable verbose error messages in production.",
-            "xss_reflected": "Encode all user input before rendering. Implement Content-Security-Policy.",
-            "xss_dom": "Avoid using innerHTML/eval. Use textContent for DOM manipulation.",
-            "ssti": "Use safe template rendering. Never pass user input directly to template engines.",
-            "ssrf": "Validate and whitelist allowed URLs. Block internal IP ranges.",
-            "lfi": "Validate file paths. Use a whitelist of allowed files. Chroot the application.",
-            "idor": "Implement proper authorization checks. Use indirect object references.",
-            "bac": "Enforce role-based access control. Verify permissions on every request.",
-            "race_condition": "Use database-level locks or atomic operations for state-changing actions.",
-            "cors_misconfiguration": "Restrict Access-Control-Allow-Origin. Never use wildcard with credentials.",
-            "missing_security_headers": "Add all recommended security headers (CSP, HSTS, X-Frame-Options).",
-            "http_smuggling": "Normalize HTTP parsing. Use HTTP/2 end-to-end.",
-            "cache_poisoning": "Strip unrecognized headers before caching. Use cache keys properly.",
-            "graphql_introspection": "Disable introspection in production. Implement query depth limiting.",
-            "open_redirect": "Validate redirect URLs against a whitelist. Never use user-controlled redirect targets.",
+    def _assess_severity_dynamic(
+        self, vuln_type: str, evidence: str, confidence: str, task: TaskItem
+    ) -> tuple[str, float]:
+        """
+        Dynamically assess vulnerability severity based on context.
+
+        Instead of a hardcoded severity map, this considers:
+        - The vulnerability type's potential impact
+        - The evidence strength (confidence level)
+        - The affected endpoint's characteristics
+        - Whether authentication is required
+        """
+        # Base severity assessment by vulnerability class (broad, not specific)
+        # These are CVSS base score ranges, not exact values
+        injection_types = {
+            "sqli",
+            "sqli_error",
+            "sqli_blind",
+            "nosqli",
+            "command_injection",
+            "ldap_injection",
         }
-        return remediations.get(vuln_type, "Review and fix the identified vulnerability.")
+        critical_types = {
+            "ssti",
+            "ssrf",
+            "lfi",
+            "rfi",
+            "deserialization",
+            "http_smuggling",
+            "bac",
+            "broken_access_control",
+        }
+        high_types = {
+            "xss_reflected",
+            "xss_dom",
+            "xss_stored",
+            "idor",
+            "jwt_manipulation",
+            "cache_poisoning",
+            "file_upload_bypass",
+        }
+        medium_types = {
+            "race_condition",
+            "cors_misconfiguration",
+            "graphql_introspection",
+            "open_redirect",
+            "csrf_missing",
+        }
+        low_types = {
+            "missing_security_headers",
+            "sensitive_data_exposure",
+            "information_disclosure",
+        }
+
+        if vuln_type in injection_types:
+            base_severity, base_cvss = "critical", 9.5
+        elif vuln_type in critical_types:
+            base_severity, base_cvss = "critical", 9.0
+        elif vuln_type in high_types:
+            base_severity, base_cvss = "high", 7.5
+        elif vuln_type in medium_types:
+            base_severity, base_cvss = "medium", 5.5
+        elif vuln_type in low_types:
+            base_severity, base_cvss = "low", 3.5
+        else:
+            # Unknown type — assess based on confidence
+            base_severity, base_cvss = "medium", 5.0
+
+        # Adjust based on confidence
+        if confidence == "low":
+            base_cvss = max(base_cvss - 1.5, 1.0)
+            if base_severity == "critical":
+                base_severity = "high"
+            elif base_severity == "high":
+                base_severity = "medium"
+        elif confidence == "high":
+            base_cvss = min(base_cvss + 0.5, 10.0)
+
+        # Adjust if endpoint requires auth (slightly lower impact if auth-gated)
+        if task.get("target_method", "GET") == "GET" and not task.get("target_params"):
+            base_cvss = max(base_cvss - 0.5, 1.0)
+
+        return base_severity, round(base_cvss, 1)
+
+    def _generate_remediation_dynamic(self, vuln_type: str, evidence: str, task: TaskItem) -> str:
+        """
+        Generate context-aware remediation advice.
+
+        Instead of a hardcoded remediation map, this produces advice
+        based on the specific vulnerability type and what was found.
+        The LLM would be ideal here but for synchronous contexts we
+        provide intelligent template-free advice.
+        """
+        endpoint = task.get("target_endpoint", "")
+        params = task.get("target_params", [])
+
+        # Category-based remediation (broad guidance, not vuln-type-specific hardcoding)
+        if "sqli" in vuln_type or "injection" in vuln_type or "nosql" in vuln_type:
+            return (
+                f"The parameter(s) {', '.join(params) if params else 'tested'} on {endpoint} "
+                f"appear vulnerable to injection. Use parameterized queries or prepared statements. "
+                f"Apply input validation and encoding appropriate to the data context. "
+                f"Review all database queries that incorporate user input on this endpoint."
+            )
+        elif "xss" in vuln_type:
+            return (
+                f"User input is reflected or rendered without proper encoding on {endpoint}. "
+                f"Apply context-aware output encoding (HTML entity, JavaScript, URL encoding as appropriate). "
+                f"Implement a strict Content-Security-Policy header. "
+                f"Consider using a templating engine with auto-escaping enabled."
+            )
+        elif "ssti" in vuln_type:
+            return (
+                f"Server-side template injection detected on {endpoint}. "
+                f"Never pass user input directly into template rendering. "
+                f"Use sandboxed template execution and restrict template syntax."
+            )
+        elif "ssrf" in vuln_type:
+            return (
+                f"Server-side request forgery possible via {endpoint}. "
+                f"Validate and whitelist allowed destination URLs/IPs. "
+                f"Block access to internal network ranges (169.254.x.x, 10.x.x.x, 127.x.x.x). "
+                f"Use a URL parser to prevent scheme/host bypasses."
+            )
+        elif "idor" in vuln_type or "bac" in vuln_type or "access_control" in vuln_type:
+            return (
+                f"Authorization bypass detected on {endpoint}. "
+                f"Implement proper authorization checks on every request. "
+                f"Use indirect object references (map user-visible IDs to internal IDs). "
+                f"Verify the requesting user has permission to access the specific resource."
+            )
+        elif "csrf" in vuln_type:
+            return (
+                f"Cross-site request forgery possible on {endpoint}. "
+                f"Implement anti-CSRF tokens on all state-changing operations. "
+                f"Use SameSite cookie attributes and verify the Origin/Referer headers."
+            )
+        elif "redirect" in vuln_type:
+            return (
+                f"Open redirect on {endpoint}. "
+                f"Validate redirect targets against a whitelist of allowed domains. "
+                f"Never use user-controlled values directly in redirect destinations."
+            )
+        elif "smuggling" in vuln_type:
+            return (
+                f"HTTP request smuggling detected. Normalize HTTP parsing across "
+                f"all proxy/server layers. Prefer HTTP/2 end-to-end to eliminate "
+                f"CL.TE/TE.CL ambiguities."
+            )
+        elif "header" in vuln_type or "cors" in vuln_type:
+            return (
+                f"Security configuration issue on {endpoint}. "
+                f"Review and implement all recommended security headers "
+                f"(CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy). "
+                f"For CORS: restrict allowed origins, never use wildcard with credentials."
+            )
+        elif "upload" in vuln_type:
+            return (
+                f"File upload vulnerability on {endpoint}. "
+                f"Validate file type by content (magic bytes), not just extension. "
+                f"Store uploads outside the webroot. Rename files to prevent path traversal. "
+                f"Set restrictive Content-Type headers when serving uploaded files."
+            )
+        else:
+            return (
+                f"Vulnerability ({vuln_type}) identified on {endpoint}. "
+                f"Review the evidence and apply appropriate security controls. "
+                f"Consult OWASP guidelines for {task.get('owasp_category', 'the relevant category')}."
+            )

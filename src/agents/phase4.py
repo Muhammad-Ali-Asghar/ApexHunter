@@ -322,41 +322,6 @@ class PivotLoopAgent:
             "current_phase": "pivot_complete",
         }
 
-        # 2. Pivot-worthy vulnerability types
-        pivotable_types = {"ssrf", "lfi", "rce", "auth_bypass", "bac"}
-
-        should_pivot = False
-        for vuln in vulnerabilities:
-            vuln_type = vuln.get("vuln_type", "")
-            vuln_id = vuln.get("vuln_id", "")
-
-            if (
-                vuln_type in pivotable_types
-                and vuln_id not in pivot_vulns
-                and pivot_count < max_pivots
-            ):
-                should_pivot = True
-                pivot_vulns.append(vuln_id)
-                logger.info(
-                    "pivot_triggered",
-                    vuln_type=vuln_type,
-                    vuln_id=vuln_id,
-                    pivot_count=pivot_count + 1,
-                )
-                break
-
-        if should_pivot:
-            return {
-                "pivot_count": pivot_count + 1,
-                "pivot_vulns": pivot_vulns,
-                "current_phase": "pivot_to_planner",
-            }
-
-        return {
-            "pivot_vulns": pivot_vulns,
-            "current_phase": "pivot_complete",
-        }
-
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Node 15: Second-Order Sweep
