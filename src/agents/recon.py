@@ -354,12 +354,18 @@ class ReconAgent:
                     parsed = urlparse(url)
                     target_parsed = urlparse(target_url)
 
-                    # Looser hostname matching (allow ports to differ, or allow subdomains)
+                    # For Juice Shop and other SPA apps, often the URL has no host if it's relative
+                    # If it HAS a hostname, it must match our target
                     if parsed.hostname and target_parsed.hostname:
                         if not parsed.hostname.endswith(target_parsed.hostname):
                             continue
 
-                    self._visited_urls.add(url)
+                    # Remove fragment/hash from URL to avoid duplicate crawls of the same page
+                    url_no_hash = url.split("#")[0]
+                    if url_no_hash in self._visited_urls:
+                        continue
+
+                    self._visited_urls.add(url_no_hash)
 
                     try:
                         logger.info("playwright_navigating", url=url, depth=depth)
@@ -448,6 +454,22 @@ class ReconAgent:
                                         pass
                                 else:
                                     absolute_url = urljoin(url, link)
+                                    # Basic filtering of static assets that don't need Playwright rendering
+                                    if absolute_url.lower().endswith(
+                                        (
+                                            ".jpg",
+                                            ".jpeg",
+                                            ".png",
+                                            ".gif",
+                                            ".css",
+                                            ".woff2",
+                                            ".ttf",
+                                            ".svg",
+                                            ".ico",
+                                        )
+                                    ):
+                                        continue
+
                                     urls_to_visit.append((absolute_url, depth + 1))
 
                         # Collect DOM sink data
@@ -578,6 +600,8 @@ class ReconAgent:
                 "-d",
                 str(min(max_depth, 5)),  # Katana depth (5 is usually enough)
                 "-jc",  # Parse JS
+                "-ct",
+                "15",  # Max crawl duration
                 "-kf",
                 "all",  # Keep all fields
                 "-j",  # JSON output
@@ -599,6 +623,23 @@ class ReconAgent:
                             method = data.get("request", {}).get("method", "GET")
 
                             if not url or url in self._visited_urls:
+                                continue
+
+                            # Remove purely static asset endpoints from Katana output to reduce noise
+                            if url.lower().endswith(
+                                (
+                                    ".jpg",
+                                    ".jpeg",
+                                    ".png",
+                                    ".gif",
+                                    ".css",
+                                    ".woff2",
+                                    ".ttf",
+                                    ".svg",
+                                    ".ico",
+                                    ".js",
+                                )
+                            ):
                                 continue
 
                             logger.info("katana_found_endpoint", method=method, url=url)
